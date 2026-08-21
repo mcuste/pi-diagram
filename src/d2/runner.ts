@@ -12,6 +12,7 @@ import {
 } from "../process.js";
 import { type Diagnostic, DiagramSourceError, parseD2Diagnostics } from "./diagnostics.js";
 import type { SafeD2Source } from "./preflight.js";
+import type { LayoutPolicy, RenderProfile } from "./profiles.js";
 
 /**
  * Runs the D2 CLI. The source reaches D2 only as a file in a fresh temporary directory: no
@@ -41,7 +42,7 @@ declare const supportedVersionBrand: unique symbol;
 declare const renderedTextBrand: unique symbol;
 declare const renderedSvgBrand: unique symbol;
 
-/** Built from this module's literals, never from model input. */
+/** Built from this module's literals and the profile table, never from model input. */
 type D2Argument = string & { readonly [d2ArgumentBrand]: true };
 
 /** Confirmed at or above `MINIMUM_D2_VERSION`. */
@@ -66,6 +67,7 @@ export interface D2Text {
 
 export interface D2SvgRequest {
   readonly source: SafeD2Source;
+  readonly profile: RenderProfile;
   readonly signal: AbortSignal | undefined;
 }
 
@@ -102,6 +104,7 @@ function args(...values: readonly string[]): readonly D2Argument[] {
   return values as readonly D2Argument[];
 }
 
+/** No theme or spacing: D2 draws text in character cells, which neither one changes. */
 function renderArguments(mode: AsciiMode): readonly D2Argument[] {
   return args(
     "--layout",
@@ -117,10 +120,18 @@ function renderArguments(mode: AsciiMode): readonly D2Argument[] {
   );
 }
 
-function svgArguments(): readonly D2Argument[] {
+function svgArguments(profile: RenderProfile): readonly D2Argument[] {
   return args(
     "--layout",
-    "elk",
+    profile.layout.engine,
+    ...spacingArguments(profile.layout),
+    ...(profile.sketch ? ["--sketch"] : []),
+    "--theme",
+    String(profile.theme),
+    "--dark-theme",
+    String(profile.darkTheme),
+    "--pad",
+    String(profile.padPx),
     "--timeout",
     String(D2_TIMEOUT_SECONDS),
     "--stdout-format",
@@ -128,6 +139,26 @@ function svgArguments(): readonly D2Argument[] {
     INPUT_FILE,
     "-",
   );
+}
+
+function spacingArguments(layout: LayoutPolicy): readonly string[] {
+  if (layout.engine === "dagre") {
+    return [
+      "--dagre-nodesep",
+      String(layout.nodeGapPx),
+      "--dagre-edgesep",
+      String(layout.edgeGapPx),
+    ];
+  }
+  const pad = layout.containerPadPx;
+  return [
+    "--elk-nodeNodeBetweenLayers",
+    String(layout.layerGapPx),
+    "--elk-edgeNodeBetweenLayers",
+    String(layout.edgeGapPx),
+    "--elk-padding",
+    `[top=${pad},left=${pad},bottom=${pad},right=${pad}]`,
+  ];
 }
 
 /** D2 reports strings such as `v0.8.1-HEAD`, so only the three numbers are compared. */
@@ -279,7 +310,7 @@ export class D2Cli implements D2Renderer {
 
   async renderSvg(request: D2SvgRequest): Promise<D2Svg> {
     const { output, version } = await this.compile(request.source, request.signal, {
-      argv: svgArguments(),
+      argv: svgArguments(request.profile),
       parse: parseRenderedSvg,
       failure: "D2 could not draw this diagram as an SVG.",
     });

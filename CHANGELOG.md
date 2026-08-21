@@ -6,8 +6,27 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Fixed
+
+- The terminal library is now loaded from the host, not from this package. Both sides have to be
+  the same copy, because the library keeps image placement state in module scope. A local checkout
+  used its own copy, so an inline image could reserve its rows and draw nothing.
+- Inline images are bounded to 30 rows. Without a height the library reserves a square, about 40
+  rows, drawn or not.
+
 ### Added
 
+- Three more profiles. `tree` draws a hierarchy with dagre, which fans children out under their
+  parent. `c4` is architecture spacing under D2's C4 palette. `dependency` is the tightest
+  spacing, for a graph with more nodes than usual, and raises the node budget to about 25.
+- `explain`, the default profile, is now drawn by hand: an answer in a conversation is a rough
+  model, and a crisp diagram claims more precision than it has. Every other profile stays crisp.
+- `profile` now decides how a diagram looks: `explain` is compact, `architecture` leaves room
+  between rows, `data` stays tight because tables are tall already, and `docs` uses a grey theme
+  that prints in greyscale. Every profile also sets a dark theme, so a saved SVG adapts to dark
+  mode. The policy reaches D2 as CLI flags, which win over anything the source sets, so the saved
+  `.d2` stays the source the model wrote. Text output is unchanged: D2 draws it in character
+  cells.
 - `formats` produces `.d2`, `.svg`, or `.txt` files and returns their paths. They are written to a
   private per-process temporary directory, not the repository, because most diagrams explain
   something in passing and should leave nothing behind.

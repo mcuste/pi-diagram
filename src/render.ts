@@ -7,6 +7,7 @@ import {
 } from "./artifacts.js";
 import { DiagramSourceError } from "./d2/diagnostics.js";
 import { parseSafeSource, type SafeD2Source } from "./d2/preflight.js";
+import { type ProfileName, parseProfile } from "./d2/profiles.js";
 import {
   type AsciiMode,
   type D2Renderer,
@@ -37,6 +38,7 @@ const MAX_BYTES = 32 * 1024;
 export interface DiagramRequest {
   readonly source: unknown;
   readonly title?: unknown;
+  readonly profile?: unknown;
   readonly render?: unknown;
   readonly formats?: unknown;
   readonly save?: unknown;
@@ -54,6 +56,7 @@ interface DiagramImage {
 }
 
 export interface DiagramRendering {
+  readonly profile: ProfileName;
   readonly renderedAs: Representation;
   readonly text: string;
   readonly image: DiagramImage | undefined;
@@ -108,6 +111,7 @@ export async function renderDiagram(
   const normalized = normalizeSource(request.source);
   const source = parseSafeSource(normalized.text);
   const representation = parseRepresentation(request.render);
+  const profile = parseProfile(request.profile);
   const title = parseTitle(request.title);
   // Everything the request asks for is parsed before D2 starts, so a bad save path costs nothing.
   const wantsFiles = request.save !== undefined || request.formats !== undefined;
@@ -141,7 +145,7 @@ export async function renderDiagram(
 
   const svg =
     names?.formats.includes("svg") === true || showsImage || savesPng
-      ? await renderer.renderSvg({ source, signal: request.signal })
+      ? await renderer.renderSvg({ source, profile, signal: request.signal })
       : undefined;
 
   let raster: RasterImage | undefined;
@@ -182,6 +186,7 @@ export async function renderDiagram(
     notes.push("The diagram is shown as source, because D2 could not draw it as text.");
     return {
       title,
+      profile: profile.name,
       sourceHash: normalized.hash,
       ...measure(source, MAX_COLUMNS),
       renderedAs: "source",
@@ -198,6 +203,7 @@ export async function renderDiagram(
   const showSource = representation === "source" || text === undefined;
   return {
     title,
+    profile: profile.name,
     sourceHash: normalized.hash,
     ...measure(showSource ? source : (text as string), MAX_COLUMNS),
     renderedAs: showSource ? "source" : mode === "standard" ? "ascii" : "unicode",

@@ -121,9 +121,31 @@ language.
 | `title` | Label shown above the diagram |
 | `render` | `auto` and `image` show a picture where the terminal can, `unicode` draws box drawing, `ascii` plain 7-bit, `source` echoes the D2 |
 | `language` | `d2`. `mermaid` is in the schema but has no adapter yet |
-| `profile` | Accepted and reported back; it starts to matter once themes are implemented |
+| `profile` | What the diagram is for. It sets the layout engine, theme, and spacing |
 | `formats` | Files to produce: `source`, `svg`, `png`, `txt`. Written outside the repository |
 | `save` | Also copy them into the repository. `dir` is required |
+
+## What a profile changes
+
+The model says what a diagram is for, and the tool decides how it looks:
+
+| Profile | For | Drawn as |
+| --- | --- | --- |
+| `explain` | A diagram inside an answer | Hand drawn, neutral theme, small margins |
+| `architecture` | System and component views | Neutral theme, more room between rows so edges stay separable |
+| `data` | Schemas, tables, class relationships | Neutral theme, tight spacing: tables are tall already |
+| `docs` | Diagrams checked into a repository | Grey theme that prints in greyscale, page-sized margins |
+| `tree` | A hierarchy: an org chart, a call tree, a file layout | Dagre, which fans children out under their parent |
+| `c4` | Architecture written in the C4 convention | Architecture spacing under the C4 palette |
+| `dependency` | A graph with more nodes than usual | The tightest spacing, cutting the room edges take past nodes |
+
+`explain` is the default and is drawn by hand: an answer in a conversation is a rough model, and a
+crisp diagram claims more precision than it has. Every other profile is crisp.
+
+Every profile also sets a dark theme, so a saved SVG adapts to dark mode.
+
+Only the picture changes. D2 draws text in character cells, so every profile gives the same box
+drawing.
 
 ## Images in the terminal
 

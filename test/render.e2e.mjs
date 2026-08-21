@@ -201,6 +201,102 @@ test("a diagram saves as editable source and a viewable SVG", async () => {
   }
 });
 
+/** Reads the SVG a profile produces, without keeping any of it in the repository. */
+async function drawSvg(name, profile) {
+  const rendering = await renderDiagram(
+    { source: await fixture(name), profile, formats: ["svg"] },
+    new D2Cli(),
+  );
+  const artifact = rendering.saved.find((saved) => saved.format === "svg");
+  const svg = await readFile(artifact.path, "utf8");
+  await rm(artifact.path, { force: true });
+  return { rendering, svg, size: canvasOf(svg) };
+}
+
+function canvasOf(svg) {
+  const found = /width="(\d+)" height="(\d+)"/u.exec(svg);
+  assert.ok(found, "the SVG reports no canvas size");
+  return { widthPx: Number(found[1]), heightPx: Number(found[2]) };
+}
+
+test("each profile draws the same source differently", async () => {
+  const drawn = new Map();
+  for (const profile of ["explain", "architecture", "data", "docs", "tree", "c4", "dependency"]) {
+    const result = await drawSvg("containers.d2", profile);
+    assert.equal(result.rendering.profile, profile);
+    drawn.set(profile, result);
+  }
+  const size = (profile) => drawn.get(profile).size;
+
+  // More room between the ranks, so the same containers occupy a taller canvas.
+  assert.ok(
+    size("architecture").heightPx > size("explain").heightPx,
+    `architecture ${size("architecture").heightPx} vs explain ${size("explain").heightPx}`,
+  );
+  // Tighter than a conversational diagram, because tables and classes are tall already.
+  assert.ok(
+    size("data").heightPx < size("explain").heightPx,
+    `data ${size("data").heightPx} vs explain ${size("explain").heightPx}`,
+  );
+  // Padded for a page, so the canvas is wider than the drawing needs in a transcript.
+  assert.ok(
+    size("docs").widthPx > size("explain").widthPx,
+    `docs ${size("docs").widthPx} vs explain ${size("explain").widthPx}`,
+  );
+  assert.ok(
+    size("dependency").heightPx < size("data").heightPx,
+    `dependency ${size("dependency").heightPx} vs data ${size("data").heightPx}`,
+  );
+  // The other engine lays the same source out differently, not just at another size.
+  assert.notEqual(
+    `${size("tree").widthPx}x${size("tree").heightPx}`,
+    `${size("explain").widthPx}x${size("explain").heightPx}`,
+  );
+
+  // c4 is architecture under another palette, so it is the one pair that shares a geometry.
+  assert.deepEqual(size("c4"), size("architecture"));
+  assert.notEqual(drawn.get("c4").svg, drawn.get("architecture").svg);
+});
+
+test("only a conversational diagram is drawn by hand", async () => {
+  // D2 draws sketch mode with pattern fills, which nothing else in the safe subset produces.
+  const sketched = (svg) => svg.includes("<pattern");
+  assert.ok(sketched((await drawSvg("flow.d2", undefined)).svg), "the default is not sketched");
+  assert.ok(sketched((await drawSvg("flow.d2", "explain")).svg), "explain is not sketched");
+  for (const profile of ["architecture", "data", "docs", "tree", "c4", "dependency"]) {
+    assert.ok(!sketched((await drawSvg("flow.d2", profile)).svg), `${profile} is sketched`);
+  }
+});
+
+test("a hierarchy keeps every edge it was given", async () => {
+  const { svg } = await drawSvg("tree.d2", "tree");
+  const source = await fixture("tree.d2");
+  const edges = source.trim().split("\n").length;
+  // One stroked path per edge. A tree layout that cannot route them draws none at all.
+  assert.equal((svg.match(/class="connection stroke-/gu) ?? []).length, edges);
+  for (const label of ["platform", "scheduler", "observability", "limits"]) {
+    assert.ok(svg.includes(label), `the tree lost ${label}`);
+  }
+});
+
+test("a saved diagram follows the reader into dark mode", async () => {
+  for (const profile of ["explain", "docs"]) {
+    const { svg } = await drawSvg("flow.d2", profile);
+    assert.match(svg, /@media[^{]*prefers-color-scheme:\s*dark/u, profile);
+  }
+});
+
+test("the profile changes the picture, not the drawing in the transcript", async () => {
+  const source = await fixture("containers.d2");
+  const drawn = [];
+  for (const profile of ["explain", "architecture", "data", "docs"]) {
+    drawn.push((await renderDiagram({ source, profile }, new D2Cli())).text);
+  }
+  // D2 draws text in character cells, so theme and spacing have nothing to change there.
+  assert.equal(new Set(drawn).size, 1);
+  assert.match(drawn[0], BOX_DRAWING);
+});
+
 test("real SVG output carries no active or remote content", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-diagram-e2e-"));
   try {

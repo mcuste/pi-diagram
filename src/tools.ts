@@ -1,6 +1,7 @@
 import { type Static, type TSchema, Type } from "typebox";
 import { parseArtifactNames, workspacePaths } from "./artifacts.js";
 import { DiagramSourceError } from "./d2/diagnostics.js";
+import type { ProfileName } from "./d2/profiles.js";
 import { D2Cli, type D2Renderer } from "./d2/runner.js";
 import {
   type Component,
@@ -38,16 +39,20 @@ const DiagramTitle = Type.String({
   description: "Short label shown with the diagram and used to name saved artifacts.",
 });
 
+/** One literal per profile, because a mapped union loses the names from the static type. */
 const DiagramProfile = Type.Union(
   [
     Type.Literal("explain"),
     Type.Literal("architecture"),
     Type.Literal("data"),
     Type.Literal("docs"),
+    Type.Literal("tree"),
+    Type.Literal("c4"),
+    Type.Literal("dependency"),
   ],
   {
     description:
-      "What the diagram is for. The harness maps this to layout, theme, and spacing; the model does not choose them.",
+      "What the diagram is for. The harness maps this to theme and spacing; the model does not choose them.",
   },
 );
 
@@ -133,7 +138,16 @@ const DIAGRAM_DESCRIPTION = [
   "",
   "Not allowed: `@` imports, `icon`, `link`, `shape: image`, and `|...|` block labels.",
   "Do not set colours, themes, or fonts. This tool owns how diagrams look.",
-  "Aim for 5 to 15 nodes; split anything larger into several diagrams.",
+  "Aim for 5 to 15 nodes, or up to about 25 with `profile: dependency`. Split anything larger.",
+  "",
+  "`profile` says what the diagram is for, and sets the layout, theme, and spacing:",
+  "  explain      an answer in this conversation, drawn by hand. The default",
+  "  architecture systems and components, with room between the parts",
+  "  data         schemas, tables, class relationships",
+  "  docs         a diagram that will be checked into the repository",
+  "  tree         a hierarchy: an org chart, a call tree, a file layout",
+  "  c4           the C4 convention, with the palette its readers expect",
+  "  dependency   a graph with more nodes than usual, drawn dense",
   "",
   "Files: `formats` produces .d2, .svg, .png, or .txt outside the repository and returns the",
   "paths. `save: { dir }` also copies them into the repository, so Markdown can reference the",
@@ -145,7 +159,7 @@ const DIAGRAM_DESCRIPTION = [
 interface DiagramToolDetails {
   readonly language: "d2";
   readonly title?: string;
-  readonly profile: Static<typeof DiagramProfile>;
+  readonly profile: ProfileName;
   readonly requested: Static<typeof DiagramRender>;
   readonly renderedAs: DisplayedAs;
   readonly image?: { readonly path: string; readonly widthPx: number; readonly heightPx: number };
@@ -320,7 +334,7 @@ function detailsFor(
   return {
     language: "d2",
     ...(rendering.title === undefined ? {} : { title: rendering.title }),
-    profile: parameters.profile ?? "explain",
+    profile: rendering.profile,
     requested: parameters.render ?? "auto",
     renderedAs: rendering.image === undefined ? rendering.renderedAs : "image",
     ...(rendering.image === undefined ? {} : { image: rendering.image }),
@@ -364,6 +378,7 @@ export function registerDiagramTools(
         {
           source: parameters.source,
           title: parameters.title,
+          profile: parameters.profile,
           render: parameters.render,
           formats: parameters.formats,
           save: parameters.save,
