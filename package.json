@@ -50,6 +50,7 @@
     "format": "biome format --write .",
     "lint": "biome lint .",
     "package:check": "pnpm build && publint",
+    "preview": "pnpm build && node scripts/preview.mjs",
     "prepack": "pnpm build",
     "quality": "biome check .",
     "release": "node scripts/release.mjs",

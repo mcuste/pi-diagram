@@ -13,9 +13,11 @@
 | `src/normalize.ts` | Source normalization and title parsing |
 | `src/artifacts.ts` | The temp store, workspace path safety, and atomic writes |
 | `src/d2/preflight.ts` | The safe-subset scanner |
+| `src/d2/profiles.ts` | What each profile does to a picture: engine, theme, and spacing |
 | `src/d2/runner.ts` | D2 discovery, version check, and the isolated render |
 | `src/d2/diagnostics.ts` | The diagnostic vocabulary and parsing of D2's errors |
 | `src/process.ts` | Child process execution |
+| `scripts/preview.mjs` | Draws one source under every profile, for comparing them by eye |
 | `test/*.test.mjs` | Deterministic suites, run by `pnpm test` |
 | `test/*.e2e.mjs` | Scenarios against the real D2 CLI, run by `pnpm test:integration` |
 | `test/fixtures/` | Diagram fixtures, and unsafe source under `security/` |
@@ -26,14 +28,31 @@ records what was proven about it: `normalizeSource` produces `NormalizedD2Source
 cannot reach the renderer without having been checked, because there is no type for it to arrive
 as. `parseD2Version`, `parseRenderedText`, and `parseBinaryName` work the same way.
 
-Still to build: profiles that actually change how a diagram looks, the render cache, and the
-Mermaid adapter.
+Still to build: the render cache and the Mermaid adapter.
+
+A profile reaches D2 as CLI flags, not as text added to the source: flags win over source config,
+and the saved `.d2` has to stay the source the model wrote. The text render gets no theme or
+spacing, because D2 draws text in character cells.
+
+ELK is the engine for every profile except `tree`, which uses dagre. That is a deliberate
+exception to ADR-004: dagre draws a hierarchy the way one is normally drawn. The engines expose
+different spacing options, so `LayoutPolicy` is a union and `src/d2/runner.ts` maps each case to
+its own flags. D2 ignores the other engine's flags, so they are not passed.
+
+`--elk-algorithm mrtree` looks right for `tree` but is not usable: in d2 0.8.1 it places the nodes
+and draws no edges. `radial` never returns, and D2's `--timeout` does not stop it; only the
+process timeout in `src/d2/runner.ts` does.
 
 Images take the same shape. `parseEmbeddedFonts` produces fonts whose table directory was checked,
 and `parseRenderedPng` produces bytes that really are a PNG of the size that was asked for; the
 display layer accepts nothing else. D2's own PNG export needs a headless browser that Playwright
 downloads on first use, which ADR-011 rules out, so `src/raster.ts` draws the SVG this tool
 already produced.
+
+`@earendil-works/pi-tui` has to be the host's copy. The host paints the components built here, and
+the library keeps image placement state in module scope, so two copies mean an image can reserve
+its rows and draw nothing. `tuiSpecifier` resolves it from the host entry point and falls back to a
+bare import; a local checkout would otherwise use its own copy, at its own version.
 
 Whether a terminal can show an image is known when the result is displayed, not when it is
 rendered, so both representations are always prepared. `renderResult` picks one. Throwing from
@@ -56,6 +75,7 @@ pnpm fix               # Apply safe Biome formatting, import, and lint fixes
 pnpm quality           # Check formatting, imports, and lint rules
 pnpm test              # Build, then run the deterministic suite
 pnpm test:integration  # Build, then run the scenarios against the real D2 CLI
+pnpm preview           # Draw one source under every profile into /tmp/diagram-preview
 pnpm deadcode          # Find unused files, exports, and dependencies with Knip
 pnpm package:check     # Build and validate the publishable package with publint
 pnpm security          # Audit dependencies for high-severity advisories

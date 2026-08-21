@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
 /**
  * Turns a diagram result into terminal components, choosing between the image and the text. The
@@ -7,6 +9,8 @@ import { readFileSync } from "node:fs";
 
 /** Wide enough for an architecture diagram, short enough to leave the transcript readable. */
 const MAX_WIDTH_CELLS = 80;
+/** Without a bound the library reserves a square, about 40 rows, drawn or not. */
+const MAX_HEIGHT_CELLS = 30;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
 export interface Component {
@@ -38,19 +42,34 @@ interface TuiModule {
     base64Data: string,
     mimeType: string,
     theme: { fallbackColor: (text: string) => string },
-    options?: { maxWidthCells?: number; filename?: string },
+    options?: { maxWidthCells?: number; maxHeightCells?: number; filename?: string },
     dimensions?: { widthPx: number; heightPx: number },
   ) => Component;
 }
 
 let tui: TuiModule | undefined;
 
+/**
+ * The library keeps image placement state in module scope, so the host and this package have to
+ * use the same copy. A local checkout has its own, which wins by bare name.
+ */
+export function tuiSpecifier(entry: string | undefined): string {
+  if (entry !== undefined) {
+    try {
+      return pathToFileURL(createRequire(entry).resolve("@earendil-works/pi-tui")).href;
+    } catch {
+      // Not resolvable from the host, so fall back to whatever this package can see.
+    }
+  }
+  return "@earendil-works/pi-tui";
+}
+
 /** Loaded once at registration, since a render cannot wait on an import. */
 export function primeDisplay(): Promise<void> {
   if (tui !== undefined) {
     return Promise.resolve();
   }
-  return import("@earendil-works/pi-tui").then(
+  return import(tuiSpecifier(process.argv[1])).then(
     (module) => {
       tui = module as unknown as TuiModule;
     },
@@ -94,7 +113,11 @@ export function renderDiagramImage(
       encoded,
       "image/png",
       { fallbackColor: (text: string) => theme.fg("toolOutput", text) },
-      { maxWidthCells: MAX_WIDTH_CELLS, filename: image.image.path },
+      {
+        maxWidthCells: MAX_WIDTH_CELLS,
+        maxHeightCells: MAX_HEIGHT_CELLS,
+        filename: image.image.path,
+      },
       { widthPx: image.image.widthPx, heightPx: image.image.heightPx },
     ),
   );

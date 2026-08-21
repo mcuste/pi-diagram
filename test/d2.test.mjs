@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { DEFAULT_PROFILE, PROFILE_NAMES, parseProfile } from "../dist/d2/profiles.js";
 import {
   D2Cli,
   parseBinaryName,
@@ -334,13 +335,30 @@ test("active or externally referenced SVG content is refused", () => {
   }
 });
 
-test("an SVG render asks D2 for SVG and nothing else changes", async () => {
+test("an SVG render carries the profile's whole policy, and nothing the source can set", async () => {
   const { d2, calls } = cli({ render: { stdout: VALID_SVG } });
-  const rendered = await d2.renderSvg({ source: "a -> b", signal: undefined });
+  const rendered = await d2.renderSvg({
+    source: "a -> b",
+    profile: DEFAULT_PROFILE,
+    signal: undefined,
+  });
   assert.equal(rendered.svg, VALID_SVG);
   assert.deepEqual(calls.at(-1).args, [
     "--layout",
     "elk",
+    "--elk-nodeNodeBetweenLayers",
+    "60",
+    "--elk-edgeNodeBetweenLayers",
+    "40",
+    "--elk-padding",
+    "[top=40,left=40,bottom=40,right=40]",
+    "--sketch",
+    "--theme",
+    "0",
+    "--dark-theme",
+    "200",
+    "--pad",
+    "30",
     "--timeout",
     "10",
     "--stdout-format",
@@ -350,12 +368,134 @@ test("an SVG render asks D2 for SVG and nothing else changes", async () => {
   ]);
 });
 
+test("a hierarchy is drawn by the other engine, with that engine's own options", async () => {
+  const { d2, calls } = cli({ render: { stdout: VALID_SVG } });
+  await d2.renderSvg({ source: "a -> b", profile: parseProfile("tree"), signal: undefined });
+  assert.deepEqual(calls.at(-1).args, [
+    "--layout",
+    "dagre",
+    "--dagre-nodesep",
+    "40",
+    "--dagre-edgesep",
+    "20",
+    "--theme",
+    "0",
+    "--dark-theme",
+    "200",
+    "--pad",
+    "40",
+    "--timeout",
+    "10",
+    "--stdout-format",
+    "svg",
+    "input.d2",
+    "-",
+  ]);
+  // ELK options would be ignored by dagre, so passing them would only mislead a reader.
+  assert.equal(
+    calls.at(-1).args.some((argument) => argument.startsWith("--elk-")),
+    false,
+  );
+});
+
+test("each profile renders with its own engine, theme, and spacing", async () => {
+  const drawn = new Map();
+  for (const name of PROFILE_NAMES) {
+    const { d2, calls } = cli({ render: { stdout: VALID_SVG } });
+    await d2.renderSvg({ source: "a -> b", profile: parseProfile(name), signal: undefined });
+    const args = calls.at(-1).args;
+    const read = (flag) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
+    drawn.set(name, {
+      engine: read("--layout"),
+      theme: read("--theme"),
+      pad: read("--pad"),
+      sketch: args.includes("--sketch"),
+      gap: read("--elk-nodeNodeBetweenLayers") ?? read("--dagre-nodesep"),
+      edgeGap: read("--elk-edgeNodeBetweenLayers") ?? read("--dagre-edgesep"),
+    });
+  }
+
+  assert.deepEqual(drawn.get("explain"), {
+    engine: "elk",
+    theme: "0",
+    pad: "30",
+    sketch: true,
+    gap: "60",
+    edgeGap: "40",
+  });
+  assert.deepEqual(drawn.get("architecture"), {
+    engine: "elk",
+    theme: "0",
+    pad: "60",
+    sketch: false,
+    gap: "90",
+    edgeGap: "50",
+  });
+  assert.deepEqual(drawn.get("data"), {
+    engine: "elk",
+    theme: "0",
+    pad: "30",
+    sketch: false,
+    gap: "50",
+    edgeGap: "30",
+  });
+  assert.deepEqual(drawn.get("docs"), {
+    engine: "elk",
+    theme: "1",
+    pad: "100",
+    sketch: false,
+    gap: "80",
+    edgeGap: "40",
+  });
+  assert.deepEqual(drawn.get("tree"), {
+    engine: "dagre",
+    theme: "0",
+    pad: "40",
+    sketch: false,
+    gap: "40",
+    edgeGap: "20",
+  });
+  assert.deepEqual(drawn.get("c4"), {
+    engine: "elk",
+    theme: "303",
+    pad: "60",
+    sketch: false,
+    gap: "90",
+    edgeGap: "50",
+  });
+  assert.deepEqual(drawn.get("dependency"), {
+    engine: "elk",
+    theme: "0",
+    pad: "20",
+    sketch: false,
+    gap: "40",
+    edgeGap: "20",
+  });
+
+  assert.deepEqual(
+    [...drawn].filter(([, flags]) => flags.sketch).map(([name]) => name),
+    ["explain"],
+  );
+});
+
+test("a text render asks for no theme or spacing, which D2 would ignore", async () => {
+  const { d2, calls } = cli({ render: { stdout: UNICODE_DIAGRAM } });
+  await d2.renderText({ source: "a -> b", asciiMode: "extended", signal: undefined });
+  const args = calls.at(-1).args;
+  for (const flag of ["--theme", "--dark-theme", "--pad", "--elk-nodeNodeBetweenLayers"]) {
+    assert.equal(args.includes(flag), false, flag);
+  }
+});
+
 test("an SVG render validates the source first, like a text render", async () => {
   const { d2 } = cli({
     validate: { exitCode: 1, stderr: "err: github.com/d2lang/d2/d2cli.validateCmd: 1:1: bad\n" },
   });
-  await assert.rejects(d2.renderSvg({ source: "a -> b", signal: undefined }), {
-    name: "DiagramSourceError",
-    message: /D2_SYNTAX/,
-  });
+  await assert.rejects(
+    d2.renderSvg({ source: "a -> b", profile: DEFAULT_PROFILE, signal: undefined }),
+    {
+      name: "DiagramSourceError",
+      message: /D2_SYNTAX/,
+    },
+  );
 });

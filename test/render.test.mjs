@@ -25,8 +25,8 @@ function createRenderer({ extended = UNICODE_DIAGRAM, standard = ASCII_DIAGRAM, 
       }
       return Promise.resolve({ text: answer, version: "v0.8.1-HEAD" });
     },
-    renderSvg({ source, signal }) {
-      calls.push({ kind: "svg", source, signal });
+    renderSvg({ source, profile, signal }) {
+      calls.push({ kind: "svg", source, profile, signal });
       if (svg instanceof Error) {
         return Promise.reject(svg);
       }
@@ -55,6 +55,34 @@ test("a render mode outside the schema is refused rather than guessed at", () =>
       `${requested}`,
     );
   }
+});
+
+test("the profile a call names decides how the picture is drawn", async () => {
+  const renderer = createRenderer();
+  const rendering = await renderDiagram(
+    { source: "a -> b", profile: "docs", formats: ["svg"] },
+    renderer,
+  );
+  const svg = renderer.calls.find((call) => call.kind === "svg");
+  assert.equal(svg.profile.name, "docs");
+  assert.equal(svg.profile.theme, 1);
+  assert.equal(rendering.profile, "docs");
+});
+
+test("a call that names no profile is drawn for a conversation", async () => {
+  const renderer = createRenderer();
+  const rendering = await renderDiagram({ source: "a -> b", formats: ["svg"] }, renderer);
+  assert.equal(renderer.calls.find((call) => call.kind === "svg").profile.name, "explain");
+  assert.equal(rendering.profile, "explain");
+});
+
+test("a profile outside the table is refused before D2 runs", async () => {
+  const renderer = createRenderer();
+  await assert.rejects(renderDiagram({ source: "a -> b", profile: "pretty" }, renderer), {
+    name: "DiagramSourceError",
+    message: /is not a profile/,
+  });
+  assert.deepEqual(renderer.calls, []);
 });
 
 test("an image request is answered with text where the host cannot show one", async () => {
