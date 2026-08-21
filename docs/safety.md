@@ -95,8 +95,27 @@ Saved SVG is checked before it is written. D2's own documentation calls exported
 so `<script>`, `<foreignObject>`, `<image>`, `<iframe>`, `<use>`, and any remote `href` are
 refused. Real output contains only embedded WOFF fonts, injected CSS, and namespace URIs.
 
-PNG is refused outright. D2 renders it by driving a headless browser that Playwright downloads on
-first use, and ADR-011 rules out fetching a renderer during a tool call.
+## Drawing the image
+
+D2 exports PNG by driving a headless browser that Playwright downloads on first use, which
+ADR-011 rules out. The image is drawn locally instead, from the SVG this tool already checked.
+
+| Control | What happens |
+| --- | --- |
+| No browser, no network | resvg draws the SVG in this process. Nothing is fetched or started. |
+| Checked input | Only an SVG that passed the checks above is rasterized, so `<script>`, `<image>`, and remote references are already gone. |
+| Fonts from the diagram | The faces D2 embedded in the SVG are rebuilt as font files in a fresh temporary directory and passed to the renderer. Every offset in the container is checked against its own length first. |
+| Bounded canvas | The draw width is derived from the diagram, capped at 1600 by 2400 pixels, and the resulting PNG is refused past 4 MB. |
+| Checked output | The bytes have to be a PNG, with an image header, a complete trailer, an area, and the width that was asked for. A silently ignored option cannot reach the terminal as a broken image. |
+| Out of the model's context | The PNG goes to the temp store and is read back when the row is displayed. Its bytes never enter the tool result the model reads. |
+| Out of the repository | Only `formats: ["png"]` with `save.dir` writes one into the workspace, through the same path checks as any other artifact. |
+| Never sent blind | A terminal with no image protocol is not sent an image, and none is drawn for it. |
+
+resvg reads the fonts it is given and nothing else, so a label with no glyph would come out as an
+empty box. Rather than let that happen quietly, the characters in the SVG's text are compared
+against what the embedded faces can draw. When something is missing, the machine's own fonts are
+added and the result says so. That is the case for CJK and emoji: D2 has no glyphs for them
+either, and sizes the boxes as if it had.
 
 ## Known limits of D2's text renderer
 

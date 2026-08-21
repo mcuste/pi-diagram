@@ -7,6 +7,9 @@
 | `src/index.ts` | Extension entry point; both hosts load it directly |
 | `src/tools.ts` | The `diagram` tool: schema, approval tier, and result shape |
 | `src/render.ts` | Representation choice, the text fallback ladder, and transcript limits |
+| `src/raster.ts` | Drawing the SVG as a PNG, and the checks on what comes back |
+| `src/display.ts` | Building the terminal components, including the inline image |
+| `src/d2/fonts.ts` | Recovering the fonts D2 embeds in its SVG, and what they can draw |
 | `src/normalize.ts` | Source normalization and title parsing |
 | `src/artifacts.ts` | The temp store, workspace path safety, and atomic writes |
 | `src/d2/preflight.ts` | The safe-subset scanner |
@@ -23,13 +26,19 @@ records what was proven about it: `normalizeSource` produces `NormalizedD2Source
 cannot reach the renderer without having been checked, because there is no type for it to arrive
 as. `parseD2Version`, `parseRenderedText`, and `parseBinaryName` work the same way.
 
-Still to build: profiles that actually change how a diagram looks, the render cache, the Mermaid
-adapter, and inline images.
+Still to build: profiles that actually change how a diagram looks, the render cache, and the
+Mermaid adapter.
 
-Images are not simply adapter work. D2 renders PNG by driving a headless browser that Playwright
-downloads on first use, which ADR-011 rules out during a tool call. Since SVG rendering already
-works, the likely path is rasterizing our own SVG with a pinned library rather than asking D2 for
-PNG at all. That decision is still open.
+Images take the same shape. `parseEmbeddedFonts` produces fonts whose table directory was checked,
+and `parseRenderedPng` produces bytes that really are a PNG of the size that was asked for; the
+display layer accepts nothing else. D2's own PNG export needs a headless browser that Playwright
+downloads on first use, which ADR-011 rules out, so `src/raster.ts` draws the SVG this tool
+already produced.
+
+Whether a terminal can show an image is known when the result is displayed, not when it is
+rendered, so both representations are always prepared. `renderResult` picks one. Throwing from
+there is how the host is told to render its own text, which is why the text path needs no
+duplicate in this package.
 
 Pi loads TypeScript through [jiti](https://github.com/unjs/jiti) and Oh My Pi runs it natively, so
 `package.json` points both `pi.extensions` and `omp.extensions` at `src/index.ts` and no build step

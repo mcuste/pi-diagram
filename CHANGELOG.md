@@ -21,8 +21,16 @@ All notable changes to this project are documented in this file. The format foll
   capped so a long session cannot fill it.
 - Saved SVG is checked first: `<script>`, `<foreignObject>`, `<image>`, `<iframe>`, `<use>`, and
   remote `href` values are refused.
-- `png` is refused with its real reason: D2 renders PNG by driving a headless browser that it
-  downloads on first use, which ADR-011 rules out during a tool call.
+- Inline images, chosen by what the terminal actually supports. `auto` shows the drawn diagram
+  where an image protocol is available and box drawing everywhere else; text is always prepared as
+  the fallback, because the decision only settles when the result reaches the screen. A terminal
+  with no image protocol is never sent one, and no SVG is rendered for it. The PNG lives in the
+  temp store and is read back at display time, so its bytes never enter the model's context.
+- PNG is drawn locally from the SVG rather than by D2, which exports it through a headless browser
+  it downloads on first use. Labels use the fonts D2 embedded in the SVG, so the picture matches
+  the boxes D2 measured; characters those fonts do not cover fall back to the machine's fonts and
+  say so, rather than coming out as empty boxes.
+- `formats` accepts `png` for places where SVG support is weak.
 - A diagram that produces files but cannot be drawn as text now shows its source and keeps the
   SVG, rather than failing the whole call because the beta text renderer choked.
 - One `diagram` tool that renders D2 source into the transcript as Unicode box drawing, plain

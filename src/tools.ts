@@ -2,6 +2,15 @@ import { type Static, type TSchema, Type } from "typebox";
 import { parseArtifactNames, workspacePaths } from "./artifacts.js";
 import { DiagramSourceError } from "./d2/diagnostics.js";
 import { D2Cli, type D2Renderer } from "./d2/runner.js";
+import {
+  type Component,
+  type DisplayContext,
+  type DisplayTheme,
+  imagesSupported,
+  primeDisplay,
+  renderDiagramImage,
+} from "./display.js";
+import { ResvgRasterizer, type SvgRasterizer } from "./raster.js";
 import { type DiagramRendering, type Representation, renderDiagram } from "./render.js";
 
 /**
@@ -70,6 +79,9 @@ const DiagramFormats = Type.Array(DiagramFormat, {
     "Files to produce. They are written outside the repository and their paths are returned. Defaults to editable source and an SVG.",
 });
 
+/** What the transcript shows, which is not always the text representation that was prepared. */
+type DisplayedAs = Representation | "image";
+
 const DiagramSave = Type.Object(
   {
     dir: Type.String({
@@ -123,21 +135,20 @@ const DIAGRAM_DESCRIPTION = [
   "Do not set colours, themes, or fonts. This tool owns how diagrams look.",
   "Aim for 5 to 15 nodes; split anything larger into several diagrams.",
   "",
-  "Files: `formats` produces .d2, .svg, or .txt outside the repository and returns the paths.",
-  "`save: { dir }` also copies them into the repository, so Markdown can reference the SVG. Only",
-  "pass `save` when the user asked to keep the diagram; explaining something needs neither.",
+  "Files: `formats` produces .d2, .svg, .png, or .txt outside the repository and returns the",
+  "paths. `save: { dir }` also copies them into the repository, so Markdown can reference the",
+  "SVG. Only pass `save` when the user asked to keep the diagram; explaining something needs",
+  "neither. A terminal that can show images shows one without being asked.",
 ].join("\n");
 
-/**
- * The diagram itself travels in `content` rather than here, because both hosts display that
- * without a custom renderer. It moves once the adapters own the display.
- */
+/** The text diagram travels in `content`, which both hosts display without a custom renderer. */
 interface DiagramToolDetails {
   readonly language: "d2";
   readonly title?: string;
   readonly profile: Static<typeof DiagramProfile>;
   readonly requested: Static<typeof DiagramRender>;
-  readonly renderedAs: Representation;
+  readonly renderedAs: DisplayedAs;
+  readonly image?: { readonly path: string; readonly widthPx: number; readonly heightPx: number };
   readonly sourceHash: string;
   readonly lineCount: number;
   readonly widthCells: number;
@@ -158,6 +169,8 @@ interface ToolResult<TDetails> {
 
 interface ToolContext {
   readonly cwd: string;
+  /** Only a terminal UI can display an image; print and RPC modes never can. */
+  readonly mode?: "tui" | "rpc" | "json" | "print";
   readonly ui?: {
     confirm(title: string, message: string): Promise<boolean>;
   };
@@ -186,6 +199,13 @@ interface ToolDefinition<TParameters extends TSchema, TDetails> {
     | ((args: Partial<Static<TParameters>>) => "shared" | "exclusive");
   readonly executionMode?: "sequential" | "parallel";
   readonly formatApprovalDetails?: (args: unknown) => string | readonly string[] | undefined;
+  /** Throwing here is the host's signal to render the result its own way. */
+  readonly renderResult?: (
+    result: { readonly content: readonly TextContent[]; readonly details: TDetails },
+    options: { readonly expanded: boolean; readonly isPartial: boolean },
+    theme: DisplayTheme,
+    context: DisplayContext,
+  ) => Component;
   execute(
     toolCallId: string,
     parameters: Static<TParameters>,
@@ -203,6 +223,7 @@ export interface DiagramExtensionApi {
 
 export interface DiagramExtensionDependencies {
   readonly renderer?: D2Renderer;
+  readonly rasterizer?: SvgRasterizer;
 }
 
 /** Only `save` reaches the repository. The temp store changes nothing worth approving. */
@@ -277,7 +298,12 @@ function outputsFor(rendering: DiagramRendering): Readonly<Record<string, string
   if (rendering.saved.length === 0) {
     return undefined;
   }
-  const keys = { source: "sourcePath", svg: "svgPath", txt: "textPath" } as const;
+  const keys = {
+    source: "sourcePath",
+    svg: "svgPath",
+    png: "pngPath",
+    txt: "textPath",
+  } as const;
   return {
     location: rendering.saved[0]?.location ?? "temp",
     ...Object.fromEntries(
@@ -296,7 +322,8 @@ function detailsFor(
     ...(rendering.title === undefined ? {} : { title: rendering.title }),
     profile: parameters.profile ?? "explain",
     requested: parameters.render ?? "auto",
-    renderedAs: rendering.renderedAs,
+    renderedAs: rendering.image === undefined ? rendering.renderedAs : "image",
+    ...(rendering.image === undefined ? {} : { image: rendering.image }),
     sourceHash: rendering.sourceHash,
     lineCount: rendering.lineCount,
     widthCells: rendering.widthCells,
@@ -306,11 +333,20 @@ function detailsFor(
   };
 }
 
+/** Saved and temporary file paths, for the expanded view. */
+function pathsFor(details: DiagramToolDetails): readonly string[] {
+  return Object.entries(details.outputs ?? {})
+    .filter(([key]) => key !== "location")
+    .map(([, path]) => path);
+}
+
 export function registerDiagramTools(
   pi: DiagramExtensionApi,
   dependencies: DiagramExtensionDependencies = {},
 ): void {
   const renderer = dependencies.renderer ?? new D2Cli();
+  const rasterizer = dependencies.rasterizer ?? new ResvgRasterizer();
+  void primeDisplay();
 
   pi.registerTool<typeof DiagramParameters, DiagramToolDetails>({
     name: "diagram",
@@ -332,14 +368,33 @@ export function registerDiagramTools(
           formats: parameters.formats,
           save: parameters.save,
           cwd: context.cwd,
+          // Drawing an image a terminal cannot show would cost an SVG render for nothing.
+          images: context.mode === "tui" && imagesSupported() !== false,
           signal,
         },
         renderer,
+        rasterizer,
       );
       return {
         content: [{ type: "text", text: contentFor(rendering) }],
         details: detailsFor(parameters, rendering),
       };
+    },
+    renderResult(result, options, theme, context) {
+      const image = result.details.image;
+      if (image === undefined) {
+        throw new Error("This diagram has no image, so the host renders its text.");
+      }
+      return renderDiagramImage(
+        {
+          image,
+          title: result.details.title,
+          paths: pathsFor(result.details),
+          notes: result.details.notes ?? [],
+        },
+        theme,
+        { showImages: context.showImages, expanded: options.expanded, state: context.state },
+      );
     },
   });
 }

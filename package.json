@@ -58,10 +58,12 @@
     "test:integration": "pnpm build && node --test test/*.e2e.mjs"
   },
   "peerDependencies": {
-    "typebox": "*"
+    "typebox": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.9",
+    "@earendil-works/pi-tui": "^0.84.2",
     "@types/node": "^26.2.0",
     "knip": "6.32.2",
     "publint": "0.3.23",
@@ -89,5 +91,13 @@
     "extensions": [
       "./src/index.ts"
     ]
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-tui": {
+      "optional": true
+    }
   }
 }

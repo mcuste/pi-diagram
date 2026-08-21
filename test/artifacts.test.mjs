@@ -97,11 +97,10 @@ test("Windows device names are refused", () => {
   }
 });
 
-test("PNG is refused with the reason, not as unimplemented", () => {
-  assert.throws(() => names({ formats: ["png"] }), {
-    name: "DiagramSourceError",
-    message: /headless browser.*Save `svg` instead/s,
-  });
+test("a PNG is named like any other artifact", () => {
+  assert.deepEqual(workspacePaths(names({ dir: "docs", formats: ["png"] })), [
+    "docs/request-path.png",
+  ]);
 });
 
 test("unknown or empty format lists are refused", () => {

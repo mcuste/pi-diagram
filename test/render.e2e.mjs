@@ -289,3 +289,66 @@ test("the tool the hosts load saves through the real CLI", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a real diagram is drawn as a real PNG, with its own fonts", async () => {
+  const rendering = await renderDiagram(
+    { source: await fixture("erd.d2"), images: true },
+    new D2Cli(),
+  );
+
+  const image = rendering.image;
+  assert.ok(image, "no image was produced");
+  assert.equal(image.widthPx > 0 && image.heightPx > 0, true);
+
+  const bytes = await readFile(image.path);
+  assert.deepEqual(
+    [...bytes.subarray(0, 8)],
+    [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    "the file is not a PNG",
+  );
+  // The header has to agree with what was reported, since the terminal scales by these numbers.
+  assert.equal(bytes.readUInt32BE(16), image.widthPx);
+  assert.equal(bytes.readUInt32BE(20), image.heightPx);
+  // A diagram with labels compresses to far more than an empty canvas would.
+  assert.ok(bytes.length > 4096, `the image is only ${bytes.length} bytes`);
+  // The text drawing is still there, because the terminal may not show images.
+  assert.match(rendering.text, BOX_DRAWING);
+  assert.deepEqual(rendering.notes, []);
+});
+
+test("labels the diagram's own font cannot draw are reported, not silently dropped", async () => {
+  const rendering = await renderDiagram(
+    { source: 'a: "注文"\na -> b', images: true, render: "image" },
+    new D2Cli(),
+  );
+  assert.ok(rendering.image, "no image was produced");
+  assert.match(rendering.notes.join("\n"), /fonts installed on this machine/);
+});
+
+test("a saved png holds the same image the terminal was given", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-e2e-"));
+  try {
+    const rendering = await renderDiagram(
+      {
+        source: await fixture("flow.d2"),
+        title: "Flow",
+        images: true,
+        formats: ["source", "svg", "png"],
+        save: { dir: "docs/diagrams" },
+        cwd: root,
+      },
+      new D2Cli(),
+    );
+
+    assert.deepEqual(
+      rendering.saved.map((artifact) => artifact.path),
+      ["docs/diagrams/flow.d2", "docs/diagrams/flow.svg", "docs/diagrams/flow.png"],
+    );
+    assert.deepEqual(
+      await readFile(join(root, "docs/diagrams/flow.png")),
+      await readFile(rendering.image.path),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
