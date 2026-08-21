@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { cacheKey, FileCache, type RenderCache } from "../cache.js";
 import {
   CommandCancelledError,
   CommandInvocationError,
@@ -289,14 +290,21 @@ export function parseRenderedSvg(raw: string): RenderedSvg {
   return svg as RenderedSvg;
 }
 
+/** Bounds what one session remembers about sources D2 already accepted. */
+const MAX_VALIDATED = 256;
+
 export class D2Cli implements D2Renderer {
   private readonly runner: CommandRunner;
   private readonly binary: string;
+  private readonly cache: RenderCache;
   private version: SupportedD2Version | undefined;
+  /** Cache keys of sources this process has compiled, so one call validates them once. */
+  private readonly validated = new Set<string>();
 
-  constructor(dependencies: { runner?: CommandRunner; binary?: string } = {}) {
+  constructor(dependencies: { runner?: CommandRunner; binary?: string; cache?: RenderCache } = {}) {
     this.runner = dependencies.runner ?? runCommand;
     this.binary = dependencies.binary ?? parseBinaryName(process.env.D2_BIN);
+    this.cache = dependencies.cache ?? new FileCache();
   }
 
   async renderText(request: D2TextRequest): Promise<D2Text> {
@@ -327,10 +335,32 @@ export class D2Cli implements D2Renderer {
     },
   ): Promise<{ output: TOutput; version: SupportedD2Version }> {
     const version = await this.ensureVersion(signal);
+    if (signal?.aborted === true) {
+      // A cached answer would otherwise come back after the call was given up on.
+      throw new CommandCancelledError("Drawing the diagram");
+    }
+
+    const identity = { source, language: "d2", binary: this.binary, version } as const;
+    const key = cacheKey({ ...identity, argv: step.argv });
+    // No arguments: what D2 accepts depends on the source and the version, not on the flags.
+    const compiles = cacheKey({ ...identity, argv: [] });
+    const stored = await this.cache.read(key);
+    if (stored !== undefined) {
+      try {
+        const output = step.parse(stored);
+        this.remember(compiles);
+        return { output, version };
+      } catch {
+        // An entry this build cannot read is no better than a missing one.
+      }
+    }
+
     const directory = await mkdtemp(join(tmpdir(), "pi-diagram-"));
     try {
       await writeFile(join(directory, INPUT_FILE), `${source}\n`, "utf8");
-      await this.validate(directory, signal);
+      if (!this.validated.has(compiles)) {
+        await this.validate(directory, signal);
+      }
       const rendered = await this.run(step.argv, directory, signal);
       if (rendered.exitCode !== 0) {
         throw new TextRenderUnavailableError(
@@ -338,10 +368,20 @@ export class D2Cli implements D2Renderer {
           parseD2Diagnostics(rendered.stderr, "D2_RENDER", [directory]),
         );
       }
-      return { output: step.parse(rendered.stdout), version };
+      const output = step.parse(rendered.stdout);
+      this.remember(compiles);
+      await this.cache.write(key, rendered.stdout);
+      return { output, version };
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  }
+
+  private remember(key: string): void {
+    if (this.validated.size >= MAX_VALIDATED) {
+      this.validated.clear();
+    }
+    this.validated.add(key);
   }
 
   private async validate(directory: string, signal: AbortSignal | undefined): Promise<void> {

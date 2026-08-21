@@ -201,6 +201,10 @@ places where SVG support is weak.
 Repository paths stay inside the workspace. Absolute paths, `..`, and symlinks pointing outside
 are all refused.
 
+What D2 drew is also kept in a temporary store, so the same diagram drawn again is about ten times
+faster, including in a later session. A new D2 version, or any change to a profile, is a different
+entry. The store holds 64 MB for a week.
+
 Layout engine, theme, padding, and font are deliberately not in the schema. They are policy here,
 and a model given those knobs spends tokens on styling and produces a different look every call.
 

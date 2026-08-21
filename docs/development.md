@@ -12,6 +12,7 @@
 | `src/d2/fonts.ts` | Recovering the fonts D2 embeds in its SVG, and what they can draw |
 | `src/normalize.ts` | Source normalization and title parsing |
 | `src/artifacts.ts` | The temp store, workspace path safety, and atomic writes |
+| `src/cache.ts` | The render cache: its key, and the bounded store on disk |
 | `src/d2/preflight.ts` | The safe-subset scanner |
 | `src/d2/profiles.ts` | What each profile does to a picture: engine, theme, and spacing |
 | `src/d2/runner.ts` | D2 discovery, version check, and the isolated render |
@@ -28,7 +29,14 @@ records what was proven about it: `normalizeSource` produces `NormalizedD2Source
 cannot reach the renderer without having been checked, because there is no type for it to arrive
 as. `parseD2Version`, `parseRenderedText`, and `parseBinaryName` work the same way.
 
-Still to build: the render cache and the Mermaid adapter.
+Still to build: the Mermaid adapter.
+
+The render cache keys on the source, the binary, the D2 version, and the exact arguments D2 was
+given. The arguments carry the profile, so there is no policy version to keep by hand: change a
+theme or a spacing number and the key changes with it. Entries hold what D2 wrote, and a hit is
+parsed again, so nothing skips the checks in `parseRenderedText` and `parseRenderedSvg`. Every
+cache operation is best-effort, and a corrupt entry is drawn again instead of being returned.
+Rendering the same diagram twice costs 642ms then 60ms, and only the version probe still runs.
 
 A profile reaches D2 as CLI flags, not as text added to the source: flags win over source config,
 and the saved `.d2` has to stay the source the model wrote. The text render gets no theme or

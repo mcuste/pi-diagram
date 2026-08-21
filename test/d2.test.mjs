@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { FileCache, noCache } from "../dist/cache.js";
 import { DEFAULT_PROFILE, PROFILE_NAMES, parseProfile } from "../dist/d2/profiles.js";
 import {
   D2Cli,
@@ -65,7 +68,8 @@ function createRunner({ installed = "v0.8.1-HEAD", validate = {}, render = {} } 
 
 function cli(options) {
   const { runner, calls } = createRunner(options);
-  return { d2: new D2Cli({ runner, binary: "d2" }), calls };
+  // No cache: these tests are about what reaches the D2 process.
+  return { d2: new D2Cli({ runner, binary: "d2", cache: noCache }), calls };
 }
 
 function request(source = "a -> b", asciiMode = "extended") {
@@ -170,6 +174,7 @@ test("D2 runs in a private directory holding only the source, then it is removed
   let seen;
   const { runner } = createRunner();
   const d2 = new D2Cli({
+    cache: noCache,
     binary: "d2",
     runner: async (command, args, options) => {
       if (args[0] === "validate") {
@@ -205,6 +210,7 @@ test("the version is read once and reused", async () => {
 test("a version check that failed is retried, so installing D2 mid-session works", async () => {
   let installed = new CommandInvocationError("d2", "not found", "ENOENT");
   const d2 = new D2Cli({
+    cache: noCache,
     binary: "d2",
     runner: async (command, args) => {
       if (args[0] === "--version") {
@@ -251,6 +257,7 @@ test("the temporary path in a render error never reaches the caller", async () =
   let directory;
   const { runner } = createRunner();
   const d2 = new D2Cli({
+    cache: noCache,
     binary: "d2",
     runner: async (command, args, options) => {
       if (args[0] !== "validate" && args[0] !== "--version") {
@@ -498,4 +505,127 @@ test("an SVG render validates the source first, like a text render", async () =>
       message: /D2_SYNTAX/,
     },
   );
+});
+
+/** A client over a cache of its own, so one test cannot serve another one's output. */
+async function cachedCli(options) {
+  const directory = await mkdtemp(join(tmpdir(), "pi-diagram-runner-cache-"));
+  const { runner, calls } = createRunner(options);
+  return {
+    d2: new D2Cli({ runner, binary: "d2", cache: new FileCache({ directory }) }),
+    calls,
+    cleanup: () => rm(directory, { recursive: true, force: true }),
+  };
+}
+
+const spawns = (calls) => calls.map((call) => call.args[0]);
+
+test("a diagram already drawn is not drawn again", async () => {
+  const { d2, calls, cleanup } = await cachedCli();
+  try {
+    const first = await d2.renderText(request());
+    const before = calls.length;
+    const second = await d2.renderText(request());
+
+    assert.equal(second.text, first.text);
+    assert.equal(calls.length, before, spawns(calls).join(" "));
+  } finally {
+    await cleanup();
+  }
+});
+
+test("a cache is not shared between two clients of different binaries", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-diagram-runner-cache-"));
+  try {
+    const one = createRunner();
+    await new D2Cli({
+      runner: one.runner,
+      binary: "d2",
+      cache: new FileCache({ directory }),
+    }).renderText(request());
+
+    const other = createRunner();
+    await new D2Cli({
+      runner: other.runner,
+      binary: "/opt/local/bin/d2",
+      cache: new FileCache({ directory }),
+    }).renderText(request());
+    assert.ok(spawns(other.calls).includes("--layout"), spawns(other.calls).join(" "));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the same source under another profile is drawn again", async () => {
+  const { d2, calls, cleanup } = await cachedCli({ render: { stdout: VALID_SVG } });
+  try {
+    await d2.renderSvg({ source: "a -> b", profile: parseProfile("explain"), signal: undefined });
+    const before = calls.length;
+    await d2.renderSvg({ source: "a -> b", profile: parseProfile("docs"), signal: undefined });
+    assert.ok(calls.length > before, "the profile is not in the key");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("one call validates a source once, however many ways it is drawn", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-diagram-runner-cache-"));
+  const calls = [];
+  const d2 = new D2Cli({
+    binary: "d2",
+    cache: new FileCache({ directory }),
+    runner: (command, args) => {
+      calls.push({ command, args });
+      const mode = args.includes("standard") ? ASCII_DIAGRAM : UNICODE_DIAGRAM;
+      const stdout = args[0] === "--version" ? "v0.8.1" : mode;
+      return Promise.resolve({ command, args, exitCode: 0, stdout, stderr: "" });
+    },
+  });
+  try {
+    await d2.renderText(request());
+    await d2.renderText(request("a -> b", "standard"));
+    assert.equal(
+      spawns(calls).filter((argument) => argument === "validate").length,
+      1,
+      spawns(calls).join(" "),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an entry this build cannot read is drawn again rather than returned", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-diagram-runner-cache-"));
+  try {
+    const cache = new FileCache({ directory });
+    const { runner, calls } = createRunner();
+    const d2 = new D2Cli({ runner, binary: "d2", cache });
+    const drawn = await d2.renderText(request());
+
+    // Every entry in this store belongs to that one source.
+    for (const name of await readdir(directory)) {
+      await writeFile(join(directory, name), "not a diagram");
+    }
+
+    const before = calls.length;
+    const again = await d2.renderText(request());
+    assert.equal(again.text, drawn.text);
+    assert.ok(calls.length > before, "a corrupt entry was returned");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a cancelled call is not answered from the cache", async () => {
+  const { d2, cleanup } = await cachedCli();
+  try {
+    await d2.renderText(request());
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(d2.renderText({ ...request(), signal: controller.signal }), {
+      name: "CommandCancelledError",
+    });
+  } finally {
+    await cleanup();
+  }
 });
