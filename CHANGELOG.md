@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- The extension now adds a short block to the host system prompt, so the model draws by itself
+  when a diagram explains something better than prose. The block says when to draw, when not to,
+  and which diagram fits which question. It is appended to whatever the host built, and is left
+  out when the `diagram` tool is not active.
+- The diagram in the transcript is a link to its image file. Clicking the title, or the file name
+  under an untitled diagram, opens the picture in the image viewer of the machine, where it can be
+  zoomed and panned. The inline row stays bounded, so a dense diagram can still be read in full.
+  The link is only emitted where the terminal supports OSC 8 hyperlinks.
+
 ## [0.1.1] - 2026-08-21
 
 ### Fixed

@@ -215,6 +215,30 @@ function registerWithImages() {
 
 const theme = { fg: (_color, text) => text };
 
+/**
+ * Every image test sets the terminal capabilities instead of inheriting them, because whether an
+ * image is drawn at all depends on the terminal running the suite, and a CI runner has none. This
+ * is the same pi-tui copy display.ts uses.
+ */
+async function withCapabilities(overrides, body) {
+  const tui = await import("@earendil-works/pi-tui");
+  const previous = tui.getCapabilities();
+  tui.setCapabilities({ ...previous, ...overrides });
+  try {
+    return await body();
+  } finally {
+    tui.setCapabilities(previous);
+  }
+}
+
+/** An image is only produced for a terminal, so these rows need a TUI call. */
+function drawInTui(diagram, parameters) {
+  return diagram.execute("call-1", parameters, undefined, () => {}, {
+    cwd: process.cwd(),
+    mode: "tui",
+  });
+}
+
 test("the waiting row names the diagram, not its source", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
@@ -241,29 +265,30 @@ test("an image is produced only in a terminal, since nothing else can show one",
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
   const tool = registerWithImages();
-  for (const [mode, expected] of [
-    ["tui", "image"],
-    ["print", "unicode"],
-    ["rpc", "unicode"],
-    [undefined, "unicode"],
-  ]) {
-    const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
-      cwd: process.cwd(),
-      mode,
-    });
-    assert.equal(result.details.renderedAs, expected, String(mode));
-    assert.equal(result.details.image === undefined, expected !== "image", String(mode));
-  }
+  await withCapabilities({ images: "kitty" }, async () => {
+    for (const [mode, expected] of [
+      ["tui", "image"],
+      ["print", "unicode"],
+      ["rpc", "unicode"],
+      [undefined, "unicode"],
+    ]) {
+      const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
+        cwd: process.cwd(),
+        mode,
+      });
+      assert.equal(result.details.renderedAs, expected, String(mode));
+      assert.equal(result.details.image === undefined, expected !== "image", String(mode));
+    }
+  });
 });
 
 test("neither the image nor the diagram travels in the content the model reads", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
   const tool = registerWithImages();
-  const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
-    cwd: process.cwd(),
-    mode: "tui",
-  });
+  const result = await withCapabilities({ images: "kitty" }, () =>
+    drawInTui(tool, { source: "a -> b" }),
+  );
   assert.deepEqual(
     result.content.map((block) => block.type),
     ["text"],
@@ -271,7 +296,7 @@ test("neither the image nor the diagram travels in the content the model reads",
   const text = result.content[0].text;
   assert.equal(text.includes(PNG_BYTES.toString("base64")), false);
   assert.doesNotMatch(text, /┌/);
-  assert.match(text, /^Drew the diagram as (an image|box drawing)\./);
+  assert.match(text, /^Drew the diagram as an image\./);
   assert.match(text, /not repeated here/);
 });
 
@@ -325,10 +350,9 @@ test("an image is shown as a component, and the text takes over when images are 
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
   const tool = registerWithImages();
-  const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
-    cwd: process.cwd(),
-    mode: "tui",
-  });
+  const result = await withCapabilities({ images: "kitty" }, () =>
+    drawInTui(tool, { source: "a -> b" }),
+  );
 
   const component = tool.renderResult(result, { expanded: false }, theme, {
     showImages: true,
@@ -348,43 +372,28 @@ test("the image is read once per result row", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
   const tool = registerWithImages();
-  const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
-    cwd: process.cwd(),
-    mode: "tui",
+  await withCapabilities({ images: "kitty" }, async () => {
+    const result = await drawInTui(tool, { source: "a -> b" });
+    const state = {};
+    const context = { showImages: true, state };
+    tool.renderResult(result, { expanded: false }, theme, context);
+    assert.equal(state.diagramImage.path, result.details.image.path);
+    // A second render reuses what was read, rather than reading the file again.
+    const { rm } = await import("node:fs/promises");
+    await rm(result.details.image.path, { force: true });
+    assert.ok(tool.renderResult(result, { expanded: true }, theme, context));
   });
-
-  const state = {};
-  const context = { showImages: true, state };
-  tool.renderResult(result, { expanded: false }, theme, context);
-  assert.equal(state.diagramImage.path, result.details.image.path);
-  // A second render reuses what was read, rather than reading the file again.
-  const { rm } = await import("node:fs/promises");
-  await rm(result.details.image.path, { force: true });
-  assert.ok(tool.renderResult(result, { expanded: true }, theme, context));
 });
-
-/** pi-tui exposes this so both code paths can be exercised; it is the same copy display.ts uses. */
-async function withCapabilities(images, body) {
-  const tui = await import("@earendil-works/pi-tui");
-  const previous = tui.getCapabilities();
-  tui.setCapabilities({ ...previous, images });
-  try {
-    return await body();
-  } finally {
-    tui.setCapabilities(previous);
-  }
-}
 
 test("a terminal with no image protocol gets the text, not a filename", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
   const tool = registerWithImages();
-  const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
-    cwd: process.cwd(),
-    mode: "tui",
-  });
+  const result = await withCapabilities({ images: "kitty" }, () =>
+    drawInTui(tool, { source: "a -> b" }),
+  );
 
-  await withCapabilities(null, () => {
+  await withCapabilities({ images: null }, () => {
     const drawn = tool
       .renderResult(result, { expanded: false }, theme, { showImages: true, state: {} })
       .render(120)
@@ -393,7 +402,7 @@ test("a terminal with no image protocol gets the text, not a filename", async ()
     assert.doesNotMatch(drawn, /\.png/);
   });
   // The same result still draws where the terminal can show one.
-  await withCapabilities("kitty", () => {
+  await withCapabilities({ images: "kitty" }, () => {
     assert.ok(
       tool.renderResult(result, { expanded: false }, theme, { showImages: true, state: {} }),
     );
@@ -404,12 +413,55 @@ test("no image is drawn at all for a terminal that cannot show one", async () =>
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
   const tool = registerWithImages();
-  const result = await withCapabilities(null, () =>
-    tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
-      cwd: process.cwd(),
-      mode: "tui",
-    }),
+  const result = await withCapabilities({ images: null }, () =>
+    drawInTui(tool, { source: "a -> b" }),
   );
   assert.equal(result.details.image, undefined);
   assert.equal(result.details.renderedAs, "unicode");
+});
+
+test("the drawn diagram links to its file, so a click opens it for zooming", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  const { pathToFileURL } = await import("node:url");
+  const { basename } = await import("node:path");
+  await primeDisplay();
+  const tool = registerWithImages();
+  const context = { showImages: true, state: {} };
+
+  await withCapabilities({ images: "kitty", hyperlinks: true }, async () => {
+    const titled = await drawInTui(tool, { source: "a -> b", title: "Request path" });
+    const url = pathToFileURL(titled.details.image.path).href;
+    const drawn = tool.renderResult(titled, { expanded: false }, theme, context).render(120);
+    assert.ok(
+      drawn.some((row) => row.includes(`\x1b]8;;${url}`) && row.includes("Request path")),
+      "the title is the link",
+    );
+
+    // With no title there is nothing to link, so the file name carries it instead.
+    const untitled = await drawInTui(tool, { source: "a -> c" });
+    const rows = tool
+      .renderResult(untitled, { expanded: false }, theme, { showImages: true, state: {} })
+      .render(120);
+    const name = basename(untitled.details.image.path);
+    assert.ok(
+      rows.some((row) => row.includes(name) && row.includes("\x1b]8;;")),
+      "the file name is the link",
+    );
+  });
+});
+
+test("a terminal that cannot make links gets neither a link nor a file name", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const tool = registerWithImages();
+
+  await withCapabilities({ images: "kitty", hyperlinks: false }, async () => {
+    const untitled = await drawInTui(tool, { source: "a -> b" });
+    const drawn = tool
+      .renderResult(untitled, { expanded: false }, theme, { showImages: true, state: {} })
+      .render(120)
+      .join("\n");
+    assert.equal(drawn.includes("\x1b]8;"), false);
+    assert.equal(drawn.includes(".png"), false);
+  });
 });

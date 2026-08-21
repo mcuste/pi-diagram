@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { basename, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /**
@@ -36,7 +37,11 @@ interface DisplayImage {
 }
 
 interface TuiModule {
-  readonly getCapabilities: () => { readonly images: "kitty" | "iterm2" | null };
+  readonly getCapabilities: () => {
+    readonly images: "kitty" | "iterm2" | null;
+    readonly hyperlinks: boolean;
+  };
+  readonly hyperlink: (text: string, url: string) => string;
   readonly Text: new (text?: string, paddingX?: number, paddingY?: number) => Component;
   readonly Container: new () => Component & { addChild(child: Component): void };
   readonly Image: new (
@@ -128,11 +133,12 @@ export function renderDiagramResult(
   const line = (text: string): void => {
     container.addChild(new module.Text(theme.fg("toolOutput", text), 0, 0));
   };
+  const image = drawable(module, view.image, context) ? view.image : undefined;
+  const url = image === undefined ? undefined : openable(module, image);
   if (view.title !== undefined) {
-    line(view.title);
+    line(url === undefined ? view.title : module.hyperlink(view.title, url));
   }
 
-  const image = drawable(module, view.image, context) ? view.image : undefined;
   if (image === undefined) {
     line(view.text);
   } else {
@@ -150,6 +156,10 @@ export function renderDiagramResult(
           { widthPx: image.widthPx, heightPx: image.heightPx },
         ),
       );
+      if (view.title === undefined && url !== undefined) {
+        const name = module.hyperlink(basename(image.path), url);
+        container.addChild(new module.Text(theme.fg("muted", name), 0, 0));
+      }
     } catch {
       // The picture is gone from the temp store, so show the text instead.
       line(view.text);
@@ -161,6 +171,16 @@ export function renderDiagramResult(
     line(footer.join("\n"));
   }
   return container;
+}
+
+/**
+ * The picture as a link, so a click opens it where it can be zoomed. The row is bounded to keep
+ * the transcript readable, so the file is the only way to see a dense diagram in full.
+ */
+function openable(module: TuiModule, image: DisplayImage): string | undefined {
+  return module.getCapabilities().hyperlinks && isAbsolute(image.path)
+    ? pathToFileURL(image.path).href
+    : undefined;
 }
 
 function drawable(

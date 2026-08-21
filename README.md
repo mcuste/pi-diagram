@@ -123,6 +123,19 @@ language.
 | `formats` | Files to produce: `source`, `svg`, `png`, `txt`. Written outside the repository |
 | `save` | Also copy them into the repository. `dir` is required |
 
+## When the model draws
+
+A described tool gets called when the user asks for a diagram, not when a diagram is the clearer
+answer. So the extension adds a short block to the host system prompt: draw when structure, flow,
+or relationships are easier to see than to read, call the tool before explaining, keep the prose
+to what the picture does not show, and never hand-write ASCII art or a Mermaid block. The block
+also maps a question to a diagram, so components go to `architecture`, message order to a sequence
+diagram, tables to `data`, a hierarchy to `tree`, and so on.
+
+The result is fewer walls of text: an answer about how parts connect arrives as a picture with a
+few lines around it. The block is appended to whatever the host built, is added once, and is left
+out when the `diagram` tool is not active.
+
 ## What a profile changes
 
 The model says what a diagram is for, and the tool decides how it looks:
@@ -159,6 +172,12 @@ to forward the protocol: tmux needs `allow-passthrough`, and herdr needs
 
 The image never enters the model's context. It is written to a private temporary directory and
 read back when the row is displayed.
+
+The row is bounded to 80 by 30 character cells, so a dense diagram is drawn small. Where the
+terminal supports OSC 8 hyperlinks, the title above the diagram links to that file: click it and
+the diagram opens in the image viewer of the machine, which zooms and pans. A diagram with no
+title shows the linked file name under the image instead. Ghostty, Kitty, WezTerm, and iTerm2 all
+open such a link, some of them on a modified click.
 
 D2 exports PNG by driving a headless browser it downloads on first use, which this tool will not
 do during a call. Instead the SVG it already produces is rasterized locally by

@@ -6,6 +6,7 @@
 | --- | --- |
 | `src/index.ts` | Extension entry point; both hosts load it directly |
 | `src/tools.ts` | The `diagram` tool: schema, approval tier, and result shape |
+| `src/guidance.ts` | The prompt block that tells the model when to draw, and how it is appended |
 | `src/render.ts` | Representation choice, the text fallback ladder, and transcript limits |
 | `src/raster.ts` | Drawing the SVG as a PNG, and the checks on what comes back |
 | `src/display.ts` | Building the terminal components, including the inline image |
@@ -62,6 +63,12 @@ display layer accepts nothing else. D2's own PNG export needs a headless browser
 downloads on first use, which ADR-011 rules out, so `src/raster.ts` draws the SVG this tool
 already produced.
 
+The diagram is also a link. `openable` in `src/display.ts` turns the path in the temp store into
+a `file://` URL, and the title, or the file name when there is no title, carries it. The link is
+emitted only when the terminal reports OSC 8 support and only when the image is really drawn,
+because a link to a picture the row does not show would be misleading. Nothing in either host is
+needed for the click: the terminal itself opens the file.
+
 `@earendil-works/pi-tui` has to be the host's copy. The host paints the components built here, and
 the library keeps image placement state in module scope, so two copies mean an image can reserve
 its rows and draw nothing. `tuiSpecifier` resolves it from the host entry point and falls back to a
@@ -80,6 +87,13 @@ Pi loads TypeScript through [jiti](https://github.com/unjs/jiti) and Oh My Pi ru
 `package.json` points both `pi.extensions` and `omp.extensions` at `src/index.ts` and no build step
 is needed to install from npm, git, or a local path. The `dist/` build exists as a type check and
 for anyone importing the package directly.
+
+The prompt block in `src/guidance.ts` is appended by the `before_agent_start` hook, which is the
+only prompt hook both hosts have. Pi hands the prompt over as one string and Oh My Pi as ordered
+blocks, so both shapes are handled, and the hook replaces what it returns: a prompt that cannot be
+read is left alone rather than being reduced to the block. The block is left out when the host
+reports that the `diagram` tool is not active, and a prompt that already carries it is not given a
+second copy.
 
 `typebox` is a peer dependency. Both hosts bundle it, and a second copy would hand the host a schema
 it does not recognise.
@@ -112,6 +126,11 @@ Or install the working copy:
 pi install /absolute/path/to/pi-diagram
 omp plugin link /absolute/path/to/pi-diagram
 ```
+
+A test that needs an image sets the pi-tui capabilities with `withCapabilities` instead of
+inheriting them. The terminal that runs the suite decides whether an image is produced at all, so
+an inherited capability passes on a developer machine and fails on a CI runner, which has no
+terminal.
 
 The two suites are separated by filename, not by an environment variable, so neither can be
 skipped without the skip being visible in the run. The integration suite asserts structure rather
