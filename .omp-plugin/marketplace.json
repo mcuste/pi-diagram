@@ -1,0 +1,24 @@
+{
+  "name": "pi-diagram",
+  "owner": {
+    "name": "mcuste"
+  },
+  "metadata": {
+    "description": "Terminal-native diagram rendering for Oh My Pi"
+  },
+  "plugins": [
+    {
+      "name": "pi-diagram",
+      "description": "One model-callable tool that renders D2 diagram source to an inline image, Unicode text, or checked-in documentation artifacts",
+      "category": "development",
+      "author": "mcuste",
+      "homepage": "https://github.com/mcuste/pi-diagram",
+      "tags": ["diagram", "d2", "architecture", "documentation"],
+      "source": {
+        "source": "github",
+        "repo": "mcuste/pi-diagram",
+        "ref": "main"
+      }
+    }
+  ]
+}
