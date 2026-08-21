@@ -1,4 +1,5 @@
 import { type Static, type TSchema, Type } from "typebox";
+import { parseArtifactNames, workspacePaths } from "./artifacts.js";
 import { DiagramSourceError } from "./d2/diagnostics.js";
 import { D2Cli, type D2Renderer } from "./d2/runner.js";
 import { type DiagramRendering, type Representation, renderDiagram } from "./render.js";
@@ -55,40 +56,40 @@ const DiagramRender = Type.Union(
   },
 );
 
-const DiagramSaveFormat = Type.Union([
+const DiagramFormat = Type.Union([
   Type.Literal("source"),
   Type.Literal("svg"),
   Type.Literal("png"),
   Type.Literal("txt"),
 ]);
 
+const DiagramFormats = Type.Array(DiagramFormat, {
+  minItems: 1,
+  uniqueItems: true,
+  description:
+    "Files to produce. They are written outside the repository and their paths are returned. Defaults to editable source and an SVG.",
+});
+
 const DiagramSave = Type.Object(
   {
-    dir: Type.Optional(
-      Type.String({
-        minLength: 1,
-        maxLength: MAX_PATH_LENGTH,
-        description: "Directory inside the workspace to write artifacts to.",
-      }),
-    ),
+    dir: Type.String({
+      minLength: 1,
+      maxLength: MAX_PATH_LENGTH,
+      description:
+        "Directory inside the workspace to copy the files into. There is no default: name where diagrams belong in this repository.",
+    }),
     basename: Type.Optional(
       Type.String({
         minLength: 1,
         maxLength: MAX_TITLE_LENGTH,
-        description: "Stable file name stem, without an extension.",
-      }),
-    ),
-    formats: Type.Optional(
-      Type.Array(DiagramSaveFormat, {
-        minItems: 1,
-        uniqueItems: true,
-        description: "Artifacts to write. Defaults to the editable source and an SVG.",
+        description: "Stable file name stem, without an extension. Defaults to the title.",
       }),
     ),
   },
   {
     additionalProperties: false,
-    description: "Write the diagram to the workspace. Omit it for a diagram shown only in chat.",
+    description:
+      "Copy the files into the repository. Use it only when the user asked to keep the diagram.",
   },
 );
 
@@ -99,6 +100,7 @@ const DiagramParameters = Type.Object(
     title: Type.Optional(DiagramTitle),
     profile: Type.Optional(DiagramProfile),
     render: Type.Optional(DiagramRender),
+    formats: Type.Optional(DiagramFormats),
     save: Type.Optional(DiagramSave),
   },
   { additionalProperties: false },
@@ -120,6 +122,10 @@ const DIAGRAM_DESCRIPTION = [
   "Not allowed: `@` imports, `icon`, `link`, `shape: image`, and `|...|` block labels.",
   "Do not set colours, themes, or fonts. This tool owns how diagrams look.",
   "Aim for 5 to 15 nodes; split anything larger into several diagrams.",
+  "",
+  "Files: `formats` produces .d2, .svg, or .txt outside the repository and returns the paths.",
+  "`save: { dir }` also copies them into the repository, so Markdown can reference the SVG. Only",
+  "pass `save` when the user asked to keep the diagram; explaining something needs neither.",
 ].join("\n");
 
 /**
@@ -136,6 +142,7 @@ interface DiagramToolDetails {
   readonly lineCount: number;
   readonly widthCells: number;
   readonly d2Version?: string;
+  readonly outputs?: Readonly<Record<string, string>>;
   readonly notes?: readonly string[];
 }
 
@@ -198,25 +205,41 @@ export interface DiagramExtensionDependencies {
   readonly renderer?: D2Renderer;
 }
 
+/** Only `save` reaches the repository. The temp store changes nothing worth approving. */
 function approvalFor(args: unknown): ToolApprovalDecision {
-  return readSave(args) ? "write" : "read";
+  return readSave(args) === undefined ? "read" : "write";
 }
 
+/** Names the repository files at stake, so approving is a decision about specific paths. */
 function approvalDetails(args: unknown): readonly string[] | undefined {
   const save = readSave(args);
-  if (!save) {
+  if (save === undefined) {
     return undefined;
   }
-  return [`Writes diagram artifacts to ${save.dir ?? "the default artifact directory"}.`];
+  const read = (key: string): unknown =>
+    typeof args === "object" && args !== null ? Reflect.get(args, key) : undefined;
+  try {
+    const title = read("title");
+    const names = parseArtifactNames(
+      { formats: read("formats"), save },
+      { title: typeof title === "string" ? title : undefined, hash: "" },
+    );
+    return workspacePaths(names).map((path) => `Writes ${path}`);
+  } catch {
+    // The call itself will refuse with the reason; the prompt only needs the intent.
+    return typeof save.dir === "string"
+      ? [`Writes diagram artifacts into ${save.dir}`]
+      : ["Writes diagram artifacts into the repository"];
+  }
 }
 
-function readSave(args: unknown): DiagramParameters["save"] | undefined {
+function readSave(args: unknown): Record<string, unknown> | undefined {
   if (typeof args !== "object" || args === null) {
     return undefined;
   }
   const save = Reflect.get(args, "save");
-  return typeof save === "object" && save !== null
-    ? (save as DiagramParameters["save"])
+  return typeof save === "object" && save !== null && !Array.isArray(save)
+    ? (save as Record<string, unknown>)
     : undefined;
 }
 
@@ -231,30 +254,43 @@ function assertSupported(parameters: DiagramParameters): void {
       },
     ]);
   }
-  if (parameters.save !== undefined) {
-    throw new DiagramSourceError("Saving diagram artifacts is not built yet.", [
-      {
-        code: "D2_SOURCE",
-        message: "This version only shows diagrams in the transcript.",
-        hint: "Call again without `save`.",
-      },
-    ]);
-  }
 }
 
 function contentFor(rendering: DiagramRendering): string {
+  const paths = rendering.saved.map((artifact) => artifact.path).join(", ");
+  const saved =
+    rendering.saved.length === 0
+      ? undefined
+      : rendering.saved[0]?.location === "workspace"
+        ? `saved in the repository: ${paths}`
+        : `saved outside the repository: ${paths}`;
   const blocks = [
     rendering.title,
     rendering.text,
+    saved,
     ...rendering.notes.map((note) => `note: ${note}`),
   ];
   return blocks.filter((block): block is string => Boolean(block)).join("\n\n");
+}
+
+function outputsFor(rendering: DiagramRendering): Readonly<Record<string, string>> | undefined {
+  if (rendering.saved.length === 0) {
+    return undefined;
+  }
+  const keys = { source: "sourcePath", svg: "svgPath", txt: "textPath" } as const;
+  return {
+    location: rendering.saved[0]?.location ?? "temp",
+    ...Object.fromEntries(
+      rendering.saved.map((artifact) => [keys[artifact.format], artifact.path]),
+    ),
+  };
 }
 
 function detailsFor(
   parameters: DiagramParameters,
   rendering: DiagramRendering,
 ): DiagramToolDetails {
+  const outputs = outputsFor(rendering);
   return {
     language: "d2",
     ...(rendering.title === undefined ? {} : { title: rendering.title }),
@@ -265,6 +301,7 @@ function detailsFor(
     lineCount: rendering.lineCount,
     widthCells: rendering.widthCells,
     ...(rendering.d2Version === undefined ? {} : { d2Version: rendering.d2Version }),
+    ...(outputs === undefined ? {} : { outputs }),
     ...(rendering.notes.length === 0 ? {} : { notes: rendering.notes }),
   };
 }
@@ -285,13 +322,16 @@ export function registerDiagramTools(
     loadMode: "discoverable",
     concurrency: "shared",
     executionMode: "parallel",
-    async execute(_toolCallId, parameters, signal) {
+    async execute(_toolCallId, parameters, signal, _onUpdate, context) {
       assertSupported(parameters);
       const rendering = await renderDiagram(
         {
           source: parameters.source,
           title: parameters.title,
           render: parameters.render,
+          formats: parameters.formats,
+          save: parameters.save,
+          cwd: context.cwd,
           signal,
         },
         renderer,

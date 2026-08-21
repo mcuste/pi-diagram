@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { D2Cli, parseBinaryName, parseD2Version, parseRenderedText } from "../dist/d2/runner.js";
+import {
+  D2Cli,
+  parseBinaryName,
+  parseD2Version,
+  parseRenderedSvg,
+  parseRenderedText,
+} from "../dist/d2/runner.js";
 import {
   CommandInvocationError,
   CommandOutputLimitError,
@@ -296,4 +302,60 @@ test("standard mode asks D2 for standard mode", async () => {
   const { d2, calls } = cli({ render: { stdout: ASCII_DIAGRAM } });
   await d2.renderText(request("a -> b", "standard"));
   assert.ok(calls.at(-1).args.includes("standard"));
+});
+
+const VALID_SVG = '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>';
+
+test("a well formed SVG document is accepted", () => {
+  assert.equal(parseRenderedSvg(`  ${VALID_SVG}\n`), VALID_SVG);
+  assert.equal(parseRenderedSvg("<svg><g/></svg>"), "<svg><g/></svg>");
+  // D2 embeds fonts and injects CSS; both are expected and self-contained.
+  const withAssets =
+    '<svg><style>.a{}</style><path d="data:application/font-woff;base64,AA"/></svg>';
+  assert.equal(parseRenderedSvg(withAssets), withAssets);
+});
+
+test("output that is not a complete SVG document is refused", () => {
+  for (const bad of ["", "   ", "not svg at all", "<svg><g/>", '<?xml version="1.0"?>']) {
+    assert.throws(() => parseRenderedSvg(bad), { name: "TextRenderUnavailableError" }, bad);
+  }
+});
+
+test("active or externally referenced SVG content is refused", () => {
+  const hostile = [
+    "<svg><script>alert(1)</script></svg>",
+    "<svg><foreignObject><b>hi</b></foreignObject></svg>",
+    '<svg><image href="/etc/hosts"/></svg>',
+    '<svg><a xlink:href="https://example.com">x</a></svg>',
+    '<svg><use href="//example.com/x"/></svg>',
+  ];
+  for (const svg of hostile) {
+    assert.throws(() => parseRenderedSvg(svg), { name: "TextRenderUnavailableError" }, svg);
+  }
+});
+
+test("an SVG render asks D2 for SVG and nothing else changes", async () => {
+  const { d2, calls } = cli({ render: { stdout: VALID_SVG } });
+  const rendered = await d2.renderSvg({ source: "a -> b", signal: undefined });
+  assert.equal(rendered.svg, VALID_SVG);
+  assert.deepEqual(calls.at(-1).args, [
+    "--layout",
+    "elk",
+    "--timeout",
+    "10",
+    "--stdout-format",
+    "svg",
+    "input.d2",
+    "-",
+  ]);
+});
+
+test("an SVG render validates the source first, like a text render", async () => {
+  const { d2 } = cli({
+    validate: { exitCode: 1, stderr: "err: github.com/d2lang/d2/d2cli.validateCmd: 1:1: bad\n" },
+  });
+  await assert.rejects(d2.renderSvg({ source: "a -> b", signal: undefined }), {
+    name: "DiagramSourceError",
+    message: /D2_SYNTAX/,
+  });
 });

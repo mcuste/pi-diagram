@@ -70,6 +70,34 @@ D2 exiting zero is not taken as proof the output is usable. Before anything is d
   diagram.
 - Nothing but newlines can control the terminal. No escape sequence reaches the transcript.
 
+## Writing files
+
+Nothing is written unless a call asks for it, and the repository is never the default. `formats`
+produces files in a private per-process temporary directory created with `mkdtemp`, so diagrams
+that quote repository content are not readable by other users of a shared machine. That store is
+capped, so a long session cannot fill the temp directory.
+
+Only `save` reaches the repository, and `save.dir` is required: no directory convention holds
+across repositories, so the destination has to be named rather than assumed. The directory and
+file name come from the model, so both are parsed before anything touches the disk.
+
+| Control | What happens |
+| --- | --- |
+| Relative paths only | An absolute `save.dir` is refused. |
+| No climbing out | A `..` segment is refused, and the resolved path must sit inside the workspace root. |
+| No symlink redirect | The deepest existing ancestor is resolved with `realpath` and checked, *before* any directory is created, so a `docs` symlink pointing elsewhere cannot have `mkdir` build the rest of the path on the other side of it. The check runs again after `mkdir`. |
+| Bounded file names | The name is slugified from `title` or `basename`: lowercase, letters and digits only, 60 characters, no separators, and no Windows device names. |
+| Plain files only | An existing path that is not a regular file, including a symlink, is never overwritten. |
+| Atomic writes | Each file is written to a temporary name and renamed, so a reader never sees half a diagram and a failed write leaves the previous version intact. |
+| Visible before approval | The approval prompt lists the exact paths, and the tier is `write`. |
+
+Saved SVG is checked before it is written. D2's own documentation calls exported SVG web content,
+so `<script>`, `<foreignObject>`, `<image>`, `<iframe>`, `<use>`, and any remote `href` are
+refused. Real output contains only embedded WOFF fonts, injected CSS, and namespace URIs.
+
+PNG is refused outright. D2 renders it by driving a headless browser that Playwright downloads on
+first use, and ADR-011 rules out fetching a renderer during a tool call.
+
 ## Known limits of D2's text renderer
 
 D2's ASCII and Unicode export is beta. Two cases are worth knowing, and both are why the source

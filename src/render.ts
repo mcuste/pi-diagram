@@ -1,3 +1,10 @@
+import {
+  type ArtifactFormat,
+  parseArtifactNames,
+  parseArtifactTarget,
+  type WrittenArtifact,
+  writeArtifacts,
+} from "./artifacts.js";
 import { DiagramSourceError } from "./d2/diagnostics.js";
 import { parseSafeSource, type SafeD2Source } from "./d2/preflight.js";
 import {
@@ -25,6 +32,9 @@ export interface DiagramRequest {
   readonly source: unknown;
   readonly title?: unknown;
   readonly render?: unknown;
+  readonly formats?: unknown;
+  readonly save?: unknown;
+  readonly cwd?: unknown;
   readonly signal?: AbortSignal | undefined;
 }
 
@@ -36,6 +46,7 @@ export interface DiagramRendering {
   readonly lineCount: number;
   readonly widthCells: number;
   readonly d2Version: SupportedD2Version | undefined;
+  readonly saved: readonly WrittenArtifact[];
   readonly notes: readonly string[];
 }
 
@@ -73,43 +84,85 @@ export async function renderDiagram(
   const source = parseSafeSource(normalized.text);
   const representation = parseRepresentation(request.render);
   const title = parseTitle(request.title);
-  const common = { title, sourceHash: normalized.hash };
+  // Everything the request asks for is parsed before D2 starts, so a bad save path costs nothing.
+  const wantsFiles = request.save !== undefined || request.formats !== undefined;
+  const names = wantsFiles
+    ? parseArtifactNames(
+        { formats: request.formats, save: request.save },
+        { title, hash: normalized.hash },
+      )
+    : undefined;
+  const target = names === undefined ? undefined : await parseArtifactTarget(request.cwd, names);
 
-  if (representation === "source") {
+  const notes: string[] = [];
+  const wantsText = representation !== "source" || names?.formats.includes("txt") === true;
+  let mode: AsciiMode = representation === "ascii" ? "standard" : "extended";
+  let drawn = wantsText ? await tryRender(renderer, source, mode, request.signal) : undefined;
+
+  if (drawn instanceof TextRenderUnavailableError && mode === "extended") {
+    // Exactly one fallback attempt is allowed before giving up.
+    const retry = await tryRender(renderer, source, "standard", request.signal);
+    if (!(retry instanceof TextRenderUnavailableError)) {
+      notes.push("Unicode output failed, so this diagram is drawn in plain ASCII.");
+      mode = "standard";
+      drawn = retry;
+    }
+  }
+
+  const textFailure = drawn instanceof TextRenderUnavailableError ? drawn : undefined;
+  const text = drawn instanceof TextRenderUnavailableError ? undefined : drawn?.text;
+
+  const svg =
+    names?.formats.includes("svg") === true
+      ? await renderer.renderSvg({ source, signal: request.signal })
+      : undefined;
+
+  let saved: readonly WrittenArtifact[] = [];
+  if (target !== undefined && names !== undefined) {
+    // Every artifact ends with a newline, the way any other checked-in text file does.
+    const contents = new Map<ArtifactFormat, string>([["source", `${source}\n`]]);
+    if (svg !== undefined) {
+      contents.set("svg", `${svg.svg}\n`);
+    }
+    if (text !== undefined) {
+      contents.set("txt", `${text}\n`);
+    } else if (names.formats.includes("txt")) {
+      notes.push("No .txt was written, because D2 could not draw this diagram as text.");
+    }
+    saved = await writeArtifacts(target, contents);
+  }
+
+  // A beta text renderer must not discard an SVG that came out fine, so a saved diagram falls
+  // back to showing its source rather than failing the whole call.
+  if (textFailure !== undefined && representation !== "source") {
+    if (saved.length === 0) {
+      throw explain(textFailure);
+    }
+    notes.push("The diagram is shown as source, because D2 could not draw it as text.");
     return {
-      ...common,
+      title,
+      sourceHash: normalized.hash,
       ...measure(source, MAX_COLUMNS),
       renderedAs: "source",
       text: source,
-      d2Version: undefined,
-      notes: [],
+      d2Version: svg?.version,
+      saved,
+      notes,
     };
   }
 
-  const notes: string[] = [];
-  let mode: AsciiMode = representation === "ascii" ? "standard" : "extended";
-  let rendered = await tryRender(renderer, source, mode, request.signal);
-
-  if (rendered instanceof TextRenderUnavailableError) {
-    if (mode === "standard") {
-      throw explain(rendered);
-    }
-    // Exactly one fallback attempt is allowed before giving up.
-    const retry = await tryRender(renderer, source, "standard", request.signal);
-    if (retry instanceof TextRenderUnavailableError) {
-      throw explain(retry);
-    }
-    notes.push("Unicode output failed, so this diagram is drawn in plain ASCII.");
-    mode = "standard";
-    rendered = retry;
-  }
-
+  // Text may have been drawn only to write a .txt sidecar, which must not override the
+  // representation the caller asked for.
+  const showSource = representation === "source" || text === undefined;
   return {
-    ...common,
-    ...measure(rendered.text, MAX_COLUMNS),
-    renderedAs: mode === "standard" ? "ascii" : "unicode",
-    text: rendered.text,
-    d2Version: rendered.version,
+    title,
+    sourceHash: normalized.hash,
+    ...measure(showSource ? source : (text as string), MAX_COLUMNS),
+    renderedAs: showSource ? "source" : mode === "standard" ? "ascii" : "unicode",
+    text: showSource ? source : (text as string),
+    d2Version:
+      drawn instanceof TextRenderUnavailableError ? svg?.version : (drawn?.version ?? svg?.version),
+    saved,
     notes,
   };
 }

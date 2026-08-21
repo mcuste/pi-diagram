@@ -6,7 +6,8 @@
  * between releases, so golden art would break on every upgrade without telling us anything.
  */
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -164,4 +165,127 @@ test("the tool the hosts load renders through the real CLI", async () => {
   assert.match(result.content[0].text, /^Request path\n\n/u);
   assert.match(result.content[0].text, BOX_DRAWING);
   assert.equal(result.details.renderedAs, "unicode");
+});
+
+test("a diagram saves as editable source and a viewable SVG", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-e2e-"));
+  try {
+    const rendering = await renderDiagram(
+      {
+        source: await fixture("containers.d2"),
+        title: "Service layout",
+        save: { dir: "docs/diagrams" },
+        cwd: root,
+      },
+      new D2Cli(),
+    );
+
+    assert.deepEqual(
+      rendering.saved.map((artifact) => artifact.path),
+      ["docs/diagrams/service-layout.d2", "docs/diagrams/service-layout.svg"],
+    );
+
+    const saved = await readFile(join(root, "docs/diagrams/service-layout.d2"), "utf8");
+    assert.equal(saved, await fixture("containers.d2"));
+
+    const svg = await readFile(join(root, "docs/diagrams/service-layout.svg"), "utf8");
+    assert.ok(svg.startsWith("<?xml") || svg.startsWith("<svg"), svg.slice(0, 40));
+    assert.ok(svg.trimEnd().endsWith("</svg>"));
+    for (const label of ["gateway", "postgres", "worker"]) {
+      assert.ok(svg.includes(label), `SVG lost ${label}`);
+    }
+    // The transcript still shows the diagram; saving is in addition to it, not instead.
+    assert.equal(rendering.renderedAs, "unicode");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("real SVG output carries no active or remote content", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-e2e-"));
+  try {
+    for (const name of ["flow.d2", "sequence.d2", "erd.d2", "klass.d2"]) {
+      const rendering = await renderDiagram(
+        {
+          source: await fixture(name),
+          basename: name,
+          title: name.replace(".d2", ""),
+          save: { dir: "docs/diagrams" },
+          cwd: root,
+        },
+        new D2Cli(),
+      );
+      const svgPath = rendering.saved.find((artifact) => artifact.format === "svg").path;
+      const svg = (await readFile(join(root, svgPath), "utf8")).toLowerCase();
+      for (const forbidden of ["<script", "<foreignobject", "<iframe"]) {
+        assert.ok(!svg.includes(forbidden), `${name} SVG contains ${forbidden}`);
+      }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a txt sidecar holds the same drawing shown in the transcript", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-e2e-"));
+  try {
+    const rendering = await renderDiagram(
+      {
+        source: await fixture("flow.d2"),
+        title: "Request flow",
+        formats: ["txt"],
+        save: { dir: "docs/design" },
+        cwd: root,
+      },
+      new D2Cli(),
+    );
+    const written = await readFile(join(root, "docs/design/request-flow.txt"), "utf8");
+    assert.equal(written, `${rendering.text}\n`);
+    assert.match(written, BOX_DRAWING);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("regenerating a diagram overwrites its own files in place", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-e2e-"));
+  try {
+    const target = {
+      title: "Layout",
+      formats: ["source"],
+      save: { dir: "docs/diagrams" },
+      cwd: root,
+    };
+    await renderDiagram({ ...target, source: "a -> b" }, new D2Cli());
+    await renderDiagram({ ...target, source: "a -> c" }, new D2Cli());
+
+    assert.equal(await readFile(join(root, "docs/diagrams/layout.d2"), "utf8"), "a -> c\n");
+    assert.deepEqual(await readdir(join(root, "docs/diagrams")), ["layout.d2"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the tool the hosts load saves through the real CLI", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-e2e-"));
+  try {
+    const result = await tool().execute(
+      "e2e-save",
+      { source: await fixture("flow.d2"), title: "Request path", save: { dir: "docs/diagrams" } },
+      undefined,
+      () => {},
+      { cwd: root },
+    );
+    assert.match(
+      result.content[0].text,
+      /saved in the repository: docs\/diagrams\/request-path\.d2, docs\/diagrams\/request-path\.svg/,
+    );
+    assert.deepEqual(result.details.outputs, {
+      location: "workspace",
+      sourcePath: "docs/diagrams/request-path.d2",
+      svgPath: "docs/diagrams/request-path.svg",
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
