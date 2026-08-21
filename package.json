@@ -1,6 +1,6 @@
 {
   "name": "@mcuste/pi-diagram",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Terminal-native diagram rendering as one safe, model-callable tool for the Pi and Oh My Pi coding agents",
   "keywords": [
     "pi-package",
