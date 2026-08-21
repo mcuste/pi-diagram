@@ -1,0 +1,91 @@
+{
+  "name": "@mcuste/pi-diagram",
+  "version": "0.0.0",
+  "description": "Terminal-native diagram rendering as one safe, model-callable tool for the Pi and Oh My Pi coding agents",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "oh-my-pi",
+    "omp",
+    "extension",
+    "diagram",
+    "d2",
+    "mermaid",
+    "architecture-diagram",
+    "sequence-diagram",
+    "svg",
+    "ascii"
+  ],
+  "license": "MIT",
+  "author": "mcuste",
+  "homepage": "https://github.com/mcuste/pi-diagram#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mcuste/pi-diagram.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mcuste/pi-diagram/issues"
+  },
+  "type": "module",
+  "packageManager": "pnpm@10.29.2",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "pnpm quality && pnpm package:check && pnpm test && pnpm deadcode && pnpm security",
+    "deadcode": "knip",
+    "fix": "biome check --write .",
+    "format": "biome format --write .",
+    "lint": "biome lint .",
+    "package:check": "pnpm build && publint",
+    "quality": "biome check .",
+    "release": "node scripts/release.mjs",
+    "security": "pnpm audit --audit-level high",
+    "test": "pnpm build && node --test test/*.test.mjs",
+    "prepack": "pnpm build"
+  },
+  "peerDependencies": {
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.9",
+    "@types/node": "^26.2.0",
+    "knip": "6.32.2",
+    "publint": "0.3.23",
+    "typebox": "^1.3.15",
+    "typescript": "^7.0.2"
+  },
+  "knip": {
+    "entry": [
+      "test/**/*.test.mjs",
+      "scripts/*.mjs"
+    ],
+    "project": [
+      "src/**/*.ts",
+      "test/**/*.mjs",
+      "scripts/*.mjs"
+    ]
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "omp": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
+}
