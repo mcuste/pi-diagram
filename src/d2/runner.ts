@@ -26,7 +26,7 @@ const MINIMUM_D2_VERSION = "0.8.0";
 const D2_TIMEOUT_SECONDS = 10;
 /** Above D2's own timeout, so D2 reports it first and this only catches a hung process. */
 const PROCESS_TIMEOUT_MS = (D2_TIMEOUT_SECONDS + 5) * 1000;
-const MAX_RENDER_BYTES = 512 * 1024;
+const MAX_RENDER_BYTES = 1024 * 1024;
 const INPUT_FILE = "input.d2";
 
 const INSTALL_HINT =
@@ -39,6 +39,7 @@ export type AsciiMode = "extended" | "standard";
 declare const d2ArgumentBrand: unique symbol;
 declare const supportedVersionBrand: unique symbol;
 declare const renderedTextBrand: unique symbol;
+declare const renderedSvgBrand: unique symbol;
 
 /** Built from this module's literals, never from model input. */
 type D2Argument = string & { readonly [d2ArgumentBrand]: true };
@@ -48,6 +49,9 @@ export type SupportedD2Version = string & { readonly [supportedVersionBrand]: tr
 
 /** Output that passed `parseRenderedText`, so it is safe to print. */
 export type RenderedDiagramText = string & { readonly [renderedTextBrand]: true };
+
+/** Output that passed `parseRenderedSvg`, so it is safe to write into the workspace. */
+export type RenderedSvg = string & { readonly [renderedSvgBrand]: true };
 
 export interface D2TextRequest {
   readonly source: SafeD2Source;
@@ -60,8 +64,19 @@ export interface D2Text {
   readonly version: SupportedD2Version;
 }
 
+export interface D2SvgRequest {
+  readonly source: SafeD2Source;
+  readonly signal: AbortSignal | undefined;
+}
+
+export interface D2Svg {
+  readonly svg: RenderedSvg;
+  readonly version: SupportedD2Version;
+}
+
 export interface D2Renderer {
   renderText(request: D2TextRequest): Promise<D2Text>;
+  renderSvg(request: D2SvgRequest): Promise<D2Svg>;
 }
 
 /** The user has to fix this by installing D2. Retrying the call will not help. */
@@ -97,6 +112,19 @@ function renderArguments(mode: AsciiMode): readonly D2Argument[] {
     mode,
     "--stdout-format",
     "ascii",
+    INPUT_FILE,
+    "-",
+  );
+}
+
+function svgArguments(): readonly D2Argument[] {
+  return args(
+    "--layout",
+    "elk",
+    "--timeout",
+    String(D2_TIMEOUT_SECONDS),
+    "--stdout-format",
+    "svg",
     INPUT_FILE,
     "-",
   );
@@ -200,6 +228,36 @@ export function parseRenderedText(raw: string, mode: AsciiMode): RenderedDiagram
   return text as RenderedDiagramText;
 }
 
+/**
+ * D2 documents exported SVG as web content. The safe subset already rules out icons, images, and
+ * Markdown labels, so anything active or externally referenced here means it was bypassed.
+ */
+export function parseRenderedSvg(raw: string): RenderedSvg {
+  const svg = raw.trim();
+  if (svg.length === 0) {
+    throw new TextRenderUnavailableError("D2 produced an empty SVG.");
+  }
+  if (!svg.startsWith("<?xml") && !svg.startsWith("<svg")) {
+    throw new TextRenderUnavailableError("D2 output does not start like an SVG document.");
+  }
+  if (!svg.endsWith("</svg>")) {
+    throw new TextRenderUnavailableError("D2 returned a truncated SVG document.");
+  }
+
+  const lowered = svg.toLowerCase();
+  for (const forbidden of ["<script", "<foreignobject", "<image", "<iframe", "<use"]) {
+    if (lowered.includes(forbidden)) {
+      throw new TextRenderUnavailableError(
+        `D2 SVG contains ${forbidden}>, which this tool does not write.`,
+      );
+    }
+  }
+  if (/(?:xlink:)?href\s*=\s*["']?(?:https?:|\/\/)/u.test(lowered)) {
+    throw new TextRenderUnavailableError("D2 SVG references a remote URL.");
+  }
+  return svg as RenderedSvg;
+}
+
 export class D2Cli implements D2Renderer {
   private readonly runner: CommandRunner;
   private readonly binary: string;
@@ -211,23 +269,45 @@ export class D2Cli implements D2Renderer {
   }
 
   async renderText(request: D2TextRequest): Promise<D2Text> {
-    const version = await this.ensureVersion(request.signal);
+    const { output, version } = await this.compile(request.source, request.signal, {
+      argv: renderArguments(request.asciiMode),
+      parse: (stdout) => parseRenderedText(stdout, request.asciiMode),
+      failure: "D2 could not draw this diagram as text.",
+    });
+    return { text: output, version };
+  }
+
+  async renderSvg(request: D2SvgRequest): Promise<D2Svg> {
+    const { output, version } = await this.compile(request.source, request.signal, {
+      argv: svgArguments(),
+      parse: parseRenderedSvg,
+      failure: "D2 could not draw this diagram as an SVG.",
+    });
+    return { svg: output, version };
+  }
+
+  private async compile<TOutput>(
+    source: SafeD2Source,
+    signal: AbortSignal | undefined,
+    step: {
+      readonly argv: readonly D2Argument[];
+      readonly parse: (stdout: string) => TOutput;
+      readonly failure: string;
+    },
+  ): Promise<{ output: TOutput; version: SupportedD2Version }> {
+    const version = await this.ensureVersion(signal);
     const directory = await mkdtemp(join(tmpdir(), "pi-diagram-"));
     try {
-      await writeFile(join(directory, INPUT_FILE), `${request.source}\n`, "utf8");
-      await this.validate(directory, request.signal);
-      const rendered = await this.run(
-        renderArguments(request.asciiMode),
-        directory,
-        request.signal,
-      );
+      await writeFile(join(directory, INPUT_FILE), `${source}\n`, "utf8");
+      await this.validate(directory, signal);
+      const rendered = await this.run(step.argv, directory, signal);
       if (rendered.exitCode !== 0) {
         throw new TextRenderUnavailableError(
-          "D2 could not draw this diagram as text.",
+          step.failure,
           parseD2Diagnostics(rendered.stderr, "D2_RENDER", [directory]),
         );
       }
-      return { text: parseRenderedText(rendered.stdout, request.asciiMode), version };
+      return { output: step.parse(rendered.stdout), version };
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

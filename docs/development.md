@@ -8,6 +8,7 @@
 | `src/tools.ts` | The `diagram` tool: schema, approval tier, and result shape |
 | `src/render.ts` | Representation choice, the text fallback ladder, and transcript limits |
 | `src/normalize.ts` | Source normalization and title parsing |
+| `src/artifacts.ts` | The temp store, workspace path safety, and atomic writes |
 | `src/d2/preflight.ts` | The safe-subset scanner |
 | `src/d2/runner.ts` | D2 discovery, version check, and the isolated render |
 | `src/d2/diagnostics.ts` | The diagnostic vocabulary and parsing of D2's errors |
@@ -23,10 +24,13 @@ records what was proven about it: `normalizeSource` produces `NormalizedD2Source
 cannot reach the renderer without having been checked, because there is no type for it to arrive
 as. `parseD2Version`, `parseRenderedText`, and `parseBinaryName` work the same way.
 
-Still to build, in the order the proposal sets out: inline images through each host's own
-components, saving `.d2` and `.svg` artifacts, the render cache, and the Mermaid adapter. Profiles
-are accepted today and reported back, but they only start to matter once there is graphical output
-to style.
+Still to build: profiles that actually change how a diagram looks, the render cache, the Mermaid
+adapter, and inline images.
+
+Images are not simply adapter work. D2 renders PNG by driving a headless browser that Playwright
+downloads on first use, which ADR-011 rules out during a tool call. Since SVG rendering already
+works, the likely path is rasterizing our own SVG with a pinned library rather than asking D2 for
+PNG at all. That decision is still open.
 
 Pi loads TypeScript through [jiti](https://github.com/unjs/jiti) and Oh My Pi runs it natively, so
 `package.json` points both `pi.extensions` and `omp.extensions` at `src/index.ts` and no build step

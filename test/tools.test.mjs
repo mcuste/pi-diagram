@@ -19,6 +19,8 @@ function register(renderer) {
   return tools.get("diagram");
 }
 
+const SVG = '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>';
+
 function createRenderer(answer = UNICODE_DIAGRAM) {
   const calls = [];
   return {
@@ -29,6 +31,9 @@ function createRenderer(answer = UNICODE_DIAGRAM) {
         return Promise.reject(answer);
       }
       return Promise.resolve({ text: answer, version: "v0.8.1-HEAD" });
+    },
+    renderSvg() {
+      return Promise.resolve({ svg: SVG, version: "v0.8.1-HEAD" });
     },
   };
 }
@@ -44,18 +49,34 @@ function accepts(args) {
   return Value.Check(parameters, args);
 }
 
-test("the tool asks for approval as a read until it writes artifacts", () => {
+test("only a repository write asks for approval", () => {
   assert.equal(diagram.approval({ source: "a -> b" }), "read");
-  assert.equal(diagram.approval({ source: "a -> b", save: {} }), "write");
+  assert.equal(diagram.approval({ source: "a -> b", formats: ["svg"] }), "read");
+  assert.equal(diagram.approval({ source: "a -> b", save: { dir: "docs" } }), "write");
   assert.equal(diagram.approval(undefined), "read");
 });
 
-test("approval details name the directory a call would write to", () => {
+test("approval details name the exact files a call would write", () => {
   assert.equal(diagram.formatApprovalDetails({ source: "a -> b" }), undefined);
   assert.deepEqual(
-    diagram.formatApprovalDetails({ source: "a -> b", save: { dir: "docs/arch" } }),
-    ["Writes diagram artifacts to docs/arch."],
+    diagram.formatApprovalDetails({
+      source: "a -> b",
+      title: "Request Lifecycle!",
+      save: { dir: "docs/arch" },
+    }),
+    ["Writes docs/arch/request-lifecycle.d2", "Writes docs/arch/request-lifecycle.svg"],
   );
+});
+
+test("approval details fall back to intent when the request will be refused anyway", () => {
+  // No title and no basename, so the call itself reports why. The prompt only needs the intent.
+  assert.deepEqual(diagram.formatApprovalDetails({ source: "a -> b", save: { dir: "docs" } }), [
+    "Writes diagram artifacts into docs",
+  ]);
+});
+
+test("a diagram kept out of the repository prompts for nothing", () => {
+  assert.equal(diagram.formatApprovalDetails({ source: "a -> b", formats: ["svg"] }), undefined);
 });
 
 test("the description shows the model the D2 syntax it needs", () => {
@@ -78,7 +99,8 @@ test("every documented field is accepted", () => {
       title: "Request lifecycle",
       profile: "architecture",
       render: "unicode",
-      save: { dir: "docs/diagrams", basename: "request-lifecycle", formats: ["source", "svg"] },
+      formats: ["source", "svg"],
+      save: { dir: "docs/diagrams", basename: "request-lifecycle" },
     }),
   );
 });
@@ -89,13 +111,15 @@ test("undocumented fields and values are rejected", () => {
   assert.ok(!accepts({ source: "a -> b", language: "graphviz" }));
   assert.ok(!accepts({ source: "a -> b", profile: "pretty" }));
   assert.ok(!accepts({ source: "a -> b", render: "svg" }));
-  assert.ok(!accepts({ source: "a -> b", save: { formats: ["pdf"] } }));
+  assert.ok(!accepts({ source: "a -> b", formats: ["pdf"] }));
   assert.ok(!accepts({ source: "a -> b", save: { sketch: true } }));
+  // A repository destination has to be named; there is no default location.
+  assert.ok(!accepts({ source: "a -> b", save: {} }));
 });
 
-test("a saved diagram asks for at least one distinct format", () => {
-  assert.ok(!accepts({ source: "a -> b", save: { formats: [] } }));
-  assert.ok(!accepts({ source: "a -> b", save: { formats: ["svg", "svg"] } }));
+test("a file request asks for at least one distinct format", () => {
+  assert.ok(!accepts({ source: "a -> b", formats: [] }));
+  assert.ok(!accepts({ source: "a -> b", formats: ["svg", "svg"] }));
 });
 
 test("a successful call puts the diagram and its title in the transcript", async () => {
@@ -160,15 +184,6 @@ test("Mermaid source is refused with what to send instead", async () => {
     run(register(renderer), { source: "graph TD; A-->B", language: "mermaid" }),
     { name: "DiagramSourceError", message: /Mermaid input is not enabled.*Send D2 source/s },
   );
-  assert.deepEqual(renderer.calls, []);
-});
-
-test("a save request is refused instead of being silently dropped", async () => {
-  const renderer = createRenderer();
-  await assert.rejects(run(register(renderer), { source: "a -> b", save: { dir: "docs" } }), {
-    name: "DiagramSourceError",
-    message: /Saving diagram artifacts is not built yet.*without `save`/s,
-  });
   assert.deepEqual(renderer.calls, []);
 });
 

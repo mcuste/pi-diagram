@@ -14,9 +14,9 @@ If any of those names are new to you:
 - **Pi** and **Oh My Pi** are terminal coding agents. An **extension** is an npm package they load
   at startup to add tools the model can call.
 
-> **Status: text output works.** Diagrams render in the transcript as box drawing or plain ASCII.
-> Inline images and saving `.d2` and `.svg` files are not built yet, and a call that asks for them
-> is told so. The design being followed is
+> **Status: text and files work.** Diagrams render in the transcript as box drawing or plain
+> ASCII. Files land outside the repository unless a destination is named. Inline images are not
+> built yet, because D2 renders PNG by driving a headless browser. The design being followed is
 > [docs/terminal_diagram_tool_proposal.md](docs/terminal_diagram_tool_proposal.md).
 
 ## Why
@@ -122,7 +122,41 @@ language.
 | `render` | `auto` and `unicode` draw box drawing, `ascii` plain 7-bit, `source` echoes the D2 |
 | `language` | `d2`. `mermaid` is in the schema but has no adapter yet |
 | `profile` | Accepted and reported back; it starts to matter once there is graphical output |
-| `save` | Not built yet; a call using it is told so |
+| `formats` | Files to produce: `source`, `svg`, `txt`. Written outside the repository |
+| `save` | Also copy them into the repository. `dir` is required |
+
+## Where files go
+
+Most diagrams explain something in passing and should leave nothing behind. So nothing is written
+unless it is asked for, and the repository is never the default:
+
+| Call | Files | Approval |
+| --- | --- | --- |
+| `{ source }` | none, the diagram is only in the transcript | read |
+| `{ source, formats: ["svg"] }` | an SVG in a private temp directory, path returned | read |
+| `{ source, title, save: { dir: "docs/diagrams" } }` | copied into the repository | write, prompts with the exact files |
+
+`save.dir` has no default. There is no directory convention that holds across repositories, so
+the destination has to be named. Only pass `save` when the user asked to keep the diagram.
+
+A saved pair is editable source plus a viewable rendering:
+
+```text
+docs/diagrams/request-lifecycle.d2
+docs/diagrams/request-lifecycle.svg
+```
+
+Markdown then needs no D2 or Mermaid runtime:
+
+```markdown
+![Request lifecycle](diagrams/request-lifecycle.svg)
+```
+
+`png` is refused: D2 renders PNG by spinning up a headless browser that it downloads on first
+use, which this tool will not do during a call. SVG scales better in documentation anyway.
+
+Repository paths stay inside the workspace. Absolute paths, `..`, and symlinks pointing outside
+are all refused.
 
 Layout engine, theme, padding, and font are deliberately not in the schema. They are policy here,
 and a model given those knobs spends tokens on styling and produces a different look every call.
