@@ -16,6 +16,11 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- A render cache. The key is the source, the binary, the D2 version, and the arguments D2 was
+  given, which carry the profile, so a theme or spacing change cannot serve an old picture. The
+  store lives outside the repository, holds 64 MB for a week, and drops the least recently used
+  entries first. Drawing the same diagram again takes 60ms instead of 642ms, and works in a later
+  session. One call also validates its source once rather than once per representation.
 - Three more profiles. `tree` draws a hierarchy with dagre, which fans children out under their
   parent. `c4` is architecture spacing under D2's C4 palette. `dependency` is the tightest
   spacing, for a graph with more nodes than usual, and raises the node budget to about 25.
