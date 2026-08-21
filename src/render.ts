@@ -14,16 +14,22 @@ import {
   TextRenderUnavailableError,
 } from "./d2/runner.js";
 import { normalizeSource, parseTitle, type SafeTitle } from "./normalize.js";
+import {
+  ImageRenderUnavailableError,
+  type RasterImage,
+  ResvgRasterizer,
+  type SvgRasterizer,
+} from "./raster.js";
 
 /**
  * D2's text renderer is beta, so a diagram it cannot draw has to fail in a way the user can
  * understand rather than turning into broken box art or a different graph.
  */
 
-/** What a text-only transcript can show. Images arrive with the harness adapters. */
+/** How the diagram is drawn as text. */
 export type Representation = "unicode" | "ascii" | "source";
 
-/** Bounds for one transcript diagram, from the complexity budgets in the design proposal. */
+/** Bounds for one transcript diagram. */
 const MAX_LINES = 300;
 const MAX_COLUMNS = 400;
 const MAX_BYTES = 32 * 1024;
@@ -35,12 +41,22 @@ export interface DiagramRequest {
   readonly formats?: unknown;
   readonly save?: unknown;
   readonly cwd?: unknown;
+  /** Whether the host can display an image at all. Only `true` enables the raster path. */
+  readonly images?: unknown;
   readonly signal?: AbortSignal | undefined;
+}
+
+interface DiagramImage {
+  /** Absolute path in the temp store. */
+  readonly path: string;
+  readonly widthPx: number;
+  readonly heightPx: number;
 }
 
 export interface DiagramRendering {
   readonly renderedAs: Representation;
   readonly text: string;
+  readonly image: DiagramImage | undefined;
   readonly title: SafeTitle | undefined;
   readonly sourceHash: string;
   readonly lineCount: number;
@@ -51,8 +67,8 @@ export interface DiagramRendering {
 }
 
 /**
- * `image` is accepted and answered with text: an unavailable image is a display fallback, not
- * an error the model should try to correct.
+ * `image` and `auto` choose the text that goes with the image. Whether a terminal can show one is
+ * only decided when the result is displayed, so both are always prepared.
  */
 export function parseRepresentation(requested: unknown): Representation {
   switch (requested) {
@@ -76,9 +92,18 @@ export function parseRepresentation(requested: unknown): Representation {
   }
 }
 
+/** Asking for a text representation suppresses the image, rather than producing both. */
+function wantsImage(request: DiagramRequest): boolean {
+  if (request.images !== true) {
+    return false;
+  }
+  return request.render === undefined || request.render === "auto" || request.render === "image";
+}
+
 export async function renderDiagram(
   request: DiagramRequest,
   renderer: D2Renderer,
+  rasterizer: SvgRasterizer = new ResvgRasterizer(),
 ): Promise<DiagramRendering> {
   const normalized = normalizeSource(request.source);
   const source = parseSafeSource(normalized.text);
@@ -95,12 +120,14 @@ export async function renderDiagram(
   const target = names === undefined ? undefined : await parseArtifactTarget(request.cwd, names);
 
   const notes: string[] = [];
+  const showsImage = wantsImage(request);
+  const savesPng = names?.formats.includes("png") === true;
   const wantsText = representation !== "source" || names?.formats.includes("txt") === true;
   let mode: AsciiMode = representation === "ascii" ? "standard" : "extended";
   let drawn = wantsText ? await tryRender(renderer, source, mode, request.signal) : undefined;
 
   if (drawn instanceof TextRenderUnavailableError && mode === "extended") {
-    // The design proposal allows exactly one fallback attempt before giving up.
+    // Exactly one fallback attempt, so a beta renderer cannot be retried indefinitely.
     const retry = await tryRender(renderer, source, "standard", request.signal);
     if (!(retry instanceof TextRenderUnavailableError)) {
       notes.push("Unicode output failed, so this diagram is drawn in plain ASCII.");
@@ -113,16 +140,26 @@ export async function renderDiagram(
   const text = drawn instanceof TextRenderUnavailableError ? undefined : drawn?.text;
 
   const svg =
-    names?.formats.includes("svg") === true
+    names?.formats.includes("svg") === true || showsImage || savesPng
       ? await renderer.renderSvg({ source, signal: request.signal })
       : undefined;
 
+  let raster: RasterImage | undefined;
+  if (svg !== undefined && (showsImage || savesPng)) {
+    raster = await tryRasterize(rasterizer, svg.svg, request.signal, notes);
+  }
+
   let saved: readonly WrittenArtifact[] = [];
   if (target !== undefined && names !== undefined) {
-    // Every artifact ends with a newline, the way any other checked-in text file does.
-    const contents = new Map<ArtifactFormat, string>([["source", `${source}\n`]]);
+    // Every text artifact ends with a newline, the way any other checked-in text file does.
+    const contents = new Map<ArtifactFormat, string | Uint8Array>([["source", `${source}\n`]]);
     if (svg !== undefined) {
       contents.set("svg", `${svg.svg}\n`);
+    }
+    if (raster !== undefined) {
+      contents.set("png", raster.png);
+    } else if (savesPng) {
+      notes.push("No .png was written, because the diagram could not be drawn as an image.");
     }
     if (text !== undefined) {
       contents.set("txt", `${text}\n`);
@@ -132,10 +169,14 @@ export async function renderDiagram(
     saved = await writeArtifacts(target, contents);
   }
 
-  // A beta text renderer must not discard an SVG that came out fine, so a saved diagram falls
-  // back to showing its source rather than failing the whole call.
+  const image =
+    raster === undefined || !showsImage
+      ? undefined
+      : await keepImage(raster, title, normalized.hash, notes);
+
+  // Work that came out fine is not discarded because the text renderer choked.
   if (textFailure !== undefined && representation !== "source") {
-    if (saved.length === 0) {
+    if (saved.length === 0 && image === undefined) {
       throw explain(textFailure);
     }
     notes.push("The diagram is shown as source, because D2 could not draw it as text.");
@@ -145,6 +186,7 @@ export async function renderDiagram(
       ...measure(source, MAX_COLUMNS),
       renderedAs: "source",
       text: source,
+      image,
       d2Version: svg?.version,
       saved,
       notes,
@@ -160,11 +202,58 @@ export async function renderDiagram(
     ...measure(showSource ? source : (text as string), MAX_COLUMNS),
     renderedAs: showSource ? "source" : mode === "standard" ? "ascii" : "unicode",
     text: showSource ? source : (text as string),
+    image,
     d2Version:
       drawn instanceof TextRenderUnavailableError ? svg?.version : (drawn?.version ?? svg?.version),
     saved,
     notes,
   };
+}
+
+/** An image that cannot be drawn is a display fallback, not a failure the model should correct. */
+async function tryRasterize(
+  rasterizer: SvgRasterizer,
+  svg: Parameters<SvgRasterizer["rasterize"]>[0]["svg"],
+  signal: AbortSignal | undefined,
+  notes: string[],
+): Promise<RasterImage | undefined> {
+  try {
+    const raster = await rasterizer.rasterize({ svg, signal });
+    if (raster.systemFonts) {
+      notes.push(
+        "Some labels use characters the diagram's own font does not carry, so the image was " +
+          "drawn with the fonts installed on this machine.",
+      );
+    }
+    return raster;
+  } catch (error) {
+    if (!(error instanceof ImageRenderUnavailableError)) {
+      throw error;
+    }
+    notes.push(`${error.message} The diagram is shown as text instead.`);
+    return undefined;
+  }
+}
+
+/** The temp store keeps the bytes out of the model's context and out of the repository. */
+async function keepImage(
+  raster: RasterImage,
+  title: SafeTitle | undefined,
+  hash: string,
+  notes: string[],
+): Promise<DiagramImage | undefined> {
+  try {
+    const names = parseArtifactNames({ formats: ["png"] }, { title, hash });
+    const target = await parseArtifactTarget(undefined, names);
+    const [written] = await writeArtifacts(target, new Map([["png", raster.png]]));
+    if (written === undefined) {
+      return undefined;
+    }
+    return { path: written.path, widthPx: raster.widthPx, heightPx: raster.heightPx };
+  } catch (error) {
+    notes.push(`The image could not be stored: ${(error as Error).message}`);
+    return undefined;
+  }
 }
 
 /**

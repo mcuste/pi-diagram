@@ -195,3 +195,158 @@ test("unsafe source is refused before D2 is started", async () => {
   });
   assert.deepEqual(renderer.calls, []);
 });
+
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9]);
+
+function createRasterizer() {
+  return {
+    rasterize() {
+      return Promise.resolve({ png: PNG_BYTES, widthPx: 800, heightPx: 600, systemFonts: false });
+    },
+  };
+}
+
+function registerWithImages() {
+  const tools = new Map();
+  registerDiagramTools(
+    {
+      registerTool(definition) {
+        tools.set(definition.name, definition);
+      },
+    },
+    { renderer: createRenderer(), rasterizer: createRasterizer() },
+  );
+  return tools.get("diagram");
+}
+
+const theme = { fg: (_color, text) => text };
+
+test("an image is produced only in a terminal, since nothing else can show one", async () => {
+  const tool = registerWithImages();
+  for (const [mode, expected] of [
+    ["tui", "image"],
+    ["print", "unicode"],
+    ["rpc", "unicode"],
+    [undefined, "unicode"],
+  ]) {
+    const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
+      cwd: process.cwd(),
+      mode,
+    });
+    assert.equal(result.details.renderedAs, expected, String(mode));
+    assert.equal(result.details.image === undefined, expected !== "image", String(mode));
+  }
+});
+
+test("the image never travels in the content the model reads", async () => {
+  const tool = registerWithImages();
+  const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
+    cwd: process.cwd(),
+    mode: "tui",
+  });
+  assert.deepEqual(
+    result.content.map((block) => block.type),
+    ["text"],
+  );
+  assert.equal(result.content[0].text.includes(PNG_BYTES.toString("base64")), false);
+  assert.match(result.content[0].text, /┌/);
+});
+
+test("the host renders its own text when there is no image to show", () => {
+  const tool = registerWithImages();
+  const context = { showImages: true, state: {} };
+  assert.throws(
+    () => tool.renderResult({ content: [], details: {} }, { expanded: false }, theme, context),
+    /no image/,
+  );
+});
+
+test("an image is shown as a component, and only when images are turned on", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const tool = registerWithImages();
+  const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
+    cwd: process.cwd(),
+    mode: "tui",
+  });
+
+  const component = tool.renderResult(result, { expanded: false }, theme, {
+    showImages: true,
+    state: {},
+  });
+  assert.equal(typeof component.render, "function");
+  assert.ok(component.render(120).length > 0);
+
+  assert.throws(
+    () => tool.renderResult(result, { expanded: false }, theme, { showImages: false, state: {} }),
+    /images are turned off/,
+  );
+});
+
+test("the image is read once per result row", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const tool = registerWithImages();
+  const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
+    cwd: process.cwd(),
+    mode: "tui",
+  });
+
+  const state = {};
+  const context = { showImages: true, state };
+  tool.renderResult(result, { expanded: false }, theme, context);
+  assert.equal(state.diagramImage.path, result.details.image.path);
+  // A second render reuses what was read, rather than reading the file again.
+  const { rm } = await import("node:fs/promises");
+  await rm(result.details.image.path, { force: true });
+  assert.ok(tool.renderResult(result, { expanded: true }, theme, context));
+});
+
+/** pi-tui exposes this so both code paths can be exercised; it is the same copy display.ts uses. */
+async function withCapabilities(images, body) {
+  const tui = await import("@earendil-works/pi-tui");
+  const previous = tui.getCapabilities();
+  tui.setCapabilities({ ...previous, images });
+  try {
+    return await body();
+  } finally {
+    tui.setCapabilities(previous);
+  }
+}
+
+test("a terminal with no image protocol gets the text, not a filename", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const tool = registerWithImages();
+  const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
+    cwd: process.cwd(),
+    mode: "tui",
+  });
+
+  await withCapabilities(null, () => {
+    assert.throws(
+      () => tool.renderResult(result, { expanded: false }, theme, { showImages: true, state: {} }),
+      /no image protocol/,
+    );
+  });
+  // The same result still draws where the terminal can show one.
+  await withCapabilities("kitty", () => {
+    assert.ok(
+      tool.renderResult(result, { expanded: false }, theme, { showImages: true, state: {} }),
+    );
+  });
+});
+
+test("no image is drawn at all for a terminal that cannot show one", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const tool = registerWithImages();
+  const result = await withCapabilities(null, () =>
+    tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
+      cwd: process.cwd(),
+      mode: "tui",
+    }),
+  );
+  assert.equal(result.details.image, undefined);
+  assert.equal(result.details.renderedAs, "unicode");
+});

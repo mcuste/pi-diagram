@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { TextRenderUnavailableError } from "../dist/d2/runner.js";
+import { ImageRenderUnavailableError } from "../dist/raster.js";
 import { parseRepresentation, renderDiagram } from "../dist/render.js";
 
 const UNICODE_DIAGRAM = "┌────┐\n│ a  │\n└────┘";
@@ -56,11 +57,17 @@ test("a render mode outside the schema is refused rather than guessed at", () =>
   }
 });
 
-test("an image request is answered with text, because that is a display fallback", async () => {
+test("an image request is answered with text where the host cannot show one", async () => {
   const renderer = createRenderer();
   const rendering = await renderDiagram({ source: "a -> b", render: "image" }, renderer);
   assert.equal(rendering.renderedAs, "unicode");
+  assert.equal(rendering.image, undefined);
   assert.equal(textCalls(renderer)[0].asciiMode, "extended");
+  // Nothing was rasterized, so no SVG was asked for either.
+  assert.equal(
+    renderer.calls.some((call) => call.kind === "svg"),
+    false,
+  );
 });
 
 test("source mode returns the normalized source without running D2", async () => {
@@ -253,6 +260,150 @@ test("source mode still writes a txt when one is asked for", async () => {
       await readFile(join(root, "docs/diagrams/flow.txt"), "utf8"),
       `${UNICODE_DIAGRAM}\n`,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+
+/** Stands in for resvg. Records what it was handed, and can fail the way resvg would. */
+function createRasterizer({ png = PNG_BYTES, systemFonts = false, error } = {}) {
+  const calls = [];
+  return {
+    calls,
+    rasterize({ svg, signal }) {
+      calls.push({ svg, signal });
+      if (error !== undefined) {
+        return Promise.reject(error);
+      }
+      return Promise.resolve({ png, widthPx: 800, heightPx: 600, systemFonts });
+    },
+  };
+}
+
+test("a host that can show images gets one, with text kept as the fallback", async () => {
+  const renderer = createRenderer();
+  const rasterizer = createRasterizer();
+  const rendering = await renderDiagram({ source: "a -> b", images: true }, renderer, rasterizer);
+
+  assert.equal(rendering.image?.widthPx, 800);
+  assert.equal(rendering.image?.heightPx, 600);
+  assert.ok(rendering.image?.path.endsWith(".png"), rendering.image?.path);
+  assert.equal(await readFile(rendering.image.path, "utf8"), PNG_BYTES.toString("utf8"));
+  // The text is still drawn, because whether images display is only known later.
+  assert.equal(rendering.renderedAs, "unicode");
+  assert.equal(rendering.text, UNICODE_DIAGRAM);
+  assert.equal(rasterizer.calls[0].svg, SVG);
+});
+
+test("asking for a text representation keeps the image out", async () => {
+  for (const render of ["unicode", "ascii", "source"]) {
+    const rasterizer = createRasterizer();
+    const rendering = await renderDiagram(
+      { source: "a -> b", render, images: true },
+      createRenderer(),
+      rasterizer,
+    );
+    assert.equal(rendering.image, undefined, render);
+    assert.equal(rasterizer.calls.length, 0, render);
+  }
+});
+
+test("an image that cannot be drawn leaves the diagram working, with a note", async () => {
+  const rasterizer = createRasterizer({
+    error: new ImageRenderUnavailableError("The rasterizer is missing."),
+  });
+  const rendering = await renderDiagram(
+    { source: "a -> b", images: true },
+    createRenderer(),
+    rasterizer,
+  );
+
+  assert.equal(rendering.image, undefined);
+  assert.equal(rendering.renderedAs, "unicode");
+  assert.match(rendering.notes.join("\n"), /rasterizer is missing.*shown as text/s);
+});
+
+test("a failure that is not an image problem is not swallowed", async () => {
+  await assert.rejects(
+    renderDiagram(
+      { source: "a -> b", images: true },
+      createRenderer(),
+      createRasterizer({ error: new TypeError("bug") }),
+    ),
+    { name: "TypeError" },
+  );
+});
+
+test("labels the diagram's own font cannot draw are reported", async () => {
+  const rendering = await renderDiagram(
+    { source: "a -> b", images: true },
+    createRenderer(),
+    createRasterizer({ systemFonts: true }),
+  );
+  assert.match(rendering.notes.join("\n"), /fonts installed on this machine/);
+});
+
+test("a png reaches the repository only when it is asked for", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-render-"));
+  try {
+    const kept = await renderDiagram(
+      {
+        source: "a -> b",
+        title: "Flow",
+        images: true,
+        formats: ["source"],
+        save: { dir: "docs" },
+        cwd: root,
+      },
+      createRenderer(),
+      createRasterizer(),
+    );
+    assert.deepEqual(
+      kept.saved.map((artifact) => artifact.path),
+      ["docs/flow.d2"],
+    );
+    // The image still exists for the terminal, outside the repository.
+    assert.ok(kept.image?.path.startsWith(tmpdir()), kept.image?.path);
+
+    const saved = await renderDiagram(
+      {
+        source: "a -> b",
+        title: "Flow",
+        formats: ["png"],
+        save: { dir: "docs" },
+        cwd: root,
+      },
+      createRenderer(),
+      createRasterizer(),
+    );
+    assert.deepEqual(
+      saved.saved.map((artifact) => artifact.path),
+      ["docs/flow.png"],
+    );
+    assert.deepEqual(await readFile(join(root, "docs/flow.png")), PNG_BYTES);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a png that could not be drawn is reported rather than written empty", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-render-"));
+  try {
+    const rendering = await renderDiagram(
+      {
+        source: "a -> b",
+        title: "Flow",
+        formats: ["png"],
+        save: { dir: "docs" },
+        cwd: root,
+      },
+      createRenderer(),
+      createRasterizer({ error: new ImageRenderUnavailableError("no rasterizer") }),
+    );
+    assert.deepEqual(rendering.saved, []);
+    assert.match(rendering.notes.join("\n"), /No \.png was written/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

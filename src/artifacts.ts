@@ -28,12 +28,13 @@ const MAX_TEMP_FILES = 64;
 const EXTENSIONS = {
   source: ".d2",
   svg: ".svg",
+  png: ".png",
   txt: ".txt",
 } as const;
 
 export type ArtifactFormat = keyof typeof EXTENSIONS;
 
-/** Editable source plus a viewable rendering, which is what ADR-009 asks documentation to keep. */
+/** Editable source plus a viewable rendering. */
 const DEFAULT_FORMATS: readonly ArtifactFormat[] = ["source", "svg"];
 
 /** Names Windows treats as devices rather than files, whatever extension follows. */
@@ -97,18 +98,11 @@ function parseFormats(requested: unknown): readonly ArtifactFormat[] {
 
   const formats: ArtifactFormat[] = [];
   for (const format of requested) {
-    if (format === "png") {
-      refuse(
-        "PNG artifacts are not available.",
-        "D2 renders PNG by driving a headless browser, which it downloads on first use.",
-        "Save `svg` instead. It needs no browser and scales better in documentation.",
-      );
-    }
-    if (format !== "source" && format !== "svg" && format !== "txt") {
+    if (!Object.hasOwn(EXTENSIONS, format)) {
       refuse(
         "Diagram save formats are not usable.",
         `${JSON.stringify(format)} is not a format.`,
-        "Use source, svg, or txt.",
+        `Use ${Object.keys(EXTENSIONS).join(", ")}.`,
       );
     }
     if (!formats.includes(format)) {
@@ -340,7 +334,7 @@ export async function parseArtifactTarget(
  */
 export async function writeArtifacts(
   target: ArtifactTarget,
-  contents: ReadonlyMap<ArtifactFormat, string>,
+  contents: ReadonlyMap<ArtifactFormat, string | Uint8Array>,
 ): Promise<readonly WrittenArtifact[]> {
   await mkdir(target.directory, { recursive: true });
   if (target.location === "workspace") {
@@ -359,7 +353,10 @@ export async function writeArtifacts(
     await assertWritable(destination);
     const temporary = join(target.directory, `.${target.names.basename}.${randomUUID()}.tmp`);
     try {
-      await writeFile(temporary, content, { encoding: "utf8", mode: 0o644 });
+      await writeFile(temporary, content, {
+        ...(typeof content === "string" ? { encoding: "utf8" as const } : {}),
+        mode: 0o644,
+      });
       await rename(temporary, destination);
     } catch (error) {
       await rm(temporary, { force: true });

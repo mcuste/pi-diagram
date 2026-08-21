@@ -25,9 +25,15 @@ test("the published package ships the declared entry point", () => {
   assert.ok(manifest.files.includes("dist"));
 });
 
-test("typebox stays a peer dependency so the host supplies its own copy", () => {
+test("host libraries stay peer dependencies so the host supplies its own copy", () => {
   assert.equal(manifest.peerDependencies.typebox, "*");
-  assert.equal(manifest.dependencies, undefined);
+  assert.equal(manifest.peerDependencies["@earendil-works/pi-tui"], "*");
+  // The TUI library is only needed to draw an image, so a host without it still renders text.
+  assert.equal(manifest.peerDependenciesMeta["@earendil-works/pi-tui"].optional, true);
+});
+
+test("the only runtime dependency is the SVG rasterizer", () => {
+  assert.deepEqual(Object.keys(manifest.dependencies), ["@resvg/resvg-js"]);
 });
 
 test("the entry point registers the diagram tool", () => {

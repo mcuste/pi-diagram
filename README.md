@@ -14,9 +14,9 @@ If any of those names are new to you:
 - **Pi** and **Oh My Pi** are terminal coding agents. An **extension** is an npm package they load
   at startup to add tools the model can call.
 
-> **Status: text and files work.** Diagrams render in the transcript as box drawing or plain
-> ASCII. Files land outside the repository unless a destination is named. Inline images are not
-> built yet, because D2 renders PNG by driving a headless browser. The design being followed is
+> **Status: images, text, and files work.** In a terminal that supports inline images the diagram
+> itself is shown; everywhere else it is box drawing or plain ASCII. Files land outside the
+> repository unless a destination is named. The design being followed is
 > [docs/terminal_diagram_tool_proposal.md](docs/terminal_diagram_tool_proposal.md).
 
 ## Why
@@ -119,11 +119,33 @@ language.
 | --- | --- |
 | `source` | The diagram, in D2 |
 | `title` | Label shown above the diagram |
-| `render` | `auto` and `unicode` draw box drawing, `ascii` plain 7-bit, `source` echoes the D2 |
+| `render` | `auto` and `image` show a picture where the terminal can, `unicode` draws box drawing, `ascii` plain 7-bit, `source` echoes the D2 |
 | `language` | `d2`. `mermaid` is in the schema but has no adapter yet |
-| `profile` | Accepted and reported back; it starts to matter once there is graphical output |
-| `formats` | Files to produce: `source`, `svg`, `txt`. Written outside the repository |
+| `profile` | Accepted and reported back; it starts to matter once themes are implemented |
+| `formats` | Files to produce: `source`, `svg`, `png`, `txt`. Written outside the repository |
 | `save` | Also copy them into the repository. `dir` is required |
+
+## Images in the terminal
+
+On Kitty, Ghostty, WezTerm, iTerm2, and anything else that speaks a terminal image protocol,
+`auto` shows the drawn diagram. Everywhere else the same call shows box drawing, and text is
+always rendered too, because whether a terminal can display an image is only settled when the
+result reaches the screen.
+
+Nothing needs configuring. The terminal's own capabilities decide, and a terminal without an
+image protocol is never sent one. Note that a multiplexer between the terminal and the agent has
+to forward the protocol: tmux needs `allow-passthrough`, and herdr needs
+`experimental.kitty_graphics`.
+
+The image never enters the model's context. It is written to a private temporary directory and
+read back when the row is displayed, so a conversation full of diagrams costs the same as a
+conversation full of text.
+
+D2 exports PNG by driving a headless browser it downloads on first use, which this tool will not
+do during a call. Instead the SVG it already produces is rasterized locally by
+[resvg](https://github.com/yisibl/resvg-js), which needs no browser and no network. Labels are
+drawn with the fonts the SVG carries, so the picture matches the boxes D2 measured. Characters
+those fonts do not cover, such as CJK, fall back to the fonts on the machine and say so.
 
 ## Where files go
 
@@ -152,8 +174,8 @@ Markdown then needs no D2 or Mermaid runtime:
 ![Request lifecycle](diagrams/request-lifecycle.svg)
 ```
 
-`png` is refused: D2 renders PNG by spinning up a headless browser that it downloads on first
-use, which this tool will not do during a call. SVG scales better in documentation anyway.
+For documentation prefer `svg`: it scales, and Markdown renders it anywhere. `png` exists for
+places where SVG support is weak.
 
 Repository paths stay inside the workspace. Absolute paths, `..`, and symlinks pointing outside
 are all refused.
