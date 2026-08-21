@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cacheKey, FileCache, type RenderCache } from "../cache.js";
@@ -77,9 +77,16 @@ export interface D2Svg {
   readonly version: SupportedD2Version;
 }
 
+export interface D2FormatRequest {
+  readonly source: SafeD2Source;
+  readonly signal: AbortSignal | undefined;
+}
+
 export interface D2Renderer {
   renderText(request: D2TextRequest): Promise<D2Text>;
   renderSvg(request: D2SvgRequest): Promise<D2Svg>;
+  /** The same source as `d2 fmt` writes it. Throws when D2 will not format it. */
+  formatSource(request: D2FormatRequest): Promise<string>;
 }
 
 /** The user has to fix this by installing D2. Retrying the call will not help. */
@@ -141,6 +148,9 @@ function svgArguments(profile: RenderProfile): readonly D2Argument[] {
     "-",
   );
 }
+
+/** `d2 fmt` rewrites the file it is given, so there is no output format to ask for. */
+const FORMAT_ARGUMENTS = args("fmt", INPUT_FILE);
 
 function spacingArguments(layout: LayoutPolicy): readonly string[] {
   if (layout.engine === "dagre") {
@@ -323,6 +333,40 @@ export class D2Cli implements D2Renderer {
       failure: "D2 could not draw this diagram as an SVG.",
     });
     return { svg: output, version };
+  }
+
+  /** The formatted source is read back from the temp directory, since `fmt` writes no stdout. */
+  async formatSource(request: D2FormatRequest): Promise<string> {
+    const version = await this.ensureVersion(request.signal);
+    const key = cacheKey({
+      source: request.source,
+      language: "d2",
+      binary: this.binary,
+      version,
+      argv: FORMAT_ARGUMENTS,
+    });
+    const stored = await this.cache.read(key);
+    if (stored !== undefined) {
+      return stored;
+    }
+
+    const directory = await mkdtemp(join(tmpdir(), "pi-diagram-"));
+    try {
+      const path = join(directory, INPUT_FILE);
+      await writeFile(path, `${request.source}\n`, "utf8");
+      const result = await this.run(FORMAT_ARGUMENTS, directory, request.signal);
+      if (result.exitCode !== 0) {
+        throw new TextRenderUnavailableError(
+          "D2 could not format this source.",
+          parseD2Diagnostics(result.stderr, "D2_RENDER", [directory]),
+        );
+      }
+      const formatted = await readFile(path, "utf8");
+      await this.cache.write(key, formatted);
+      return formatted;
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   }
 
   private async compile<TOutput>(

@@ -167,6 +167,27 @@ test("the tool the hosts load renders through the real CLI", async () => {
   assert.equal(result.details.renderedAs, "unicode");
 });
 
+test("the real CLI formats the source before it is checked in", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-e2e-"));
+  try {
+    await renderDiagram(
+      {
+        source: "a->b:  hello\nc:   {  d  }",
+        title: "Sloppy",
+        formats: ["source"],
+        save: { dir: "docs/diagrams" },
+        cwd: root,
+      },
+      new D2Cli(),
+    );
+
+    const saved = await readFile(join(root, "docs/diagrams/sloppy.d2"), "utf8");
+    assert.equal(saved, "a -> b: hello\nc: {d}\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a diagram saves as editable source and a viewable SVG", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-diagram-e2e-"));
   try {

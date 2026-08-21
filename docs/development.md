@@ -30,8 +30,6 @@ records what was proven about it: `normalizeSource` produces `NormalizedD2Source
 cannot reach the renderer without having been checked, because there is no type for it to arrive
 as. `parseD2Version`, `parseRenderedText`, and `parseBinaryName` work the same way.
 
-Still to build: the Mermaid adapter.
-
 The render cache keys on the source, the binary, the D2 version, and the exact arguments D2 was
 given. The arguments carry the profile, so there is no policy version to keep by hand: change a
 theme or a spacing number and the key changes with it. Entries hold what D2 wrote, and a hit is
@@ -40,8 +38,8 @@ cache operation is best-effort, and a corrupt entry is drawn again instead of be
 Rendering the same diagram twice costs 642ms then 60ms, and only the version probe still runs.
 
 A profile reaches D2 as CLI flags, not as text added to the source: flags win over source config,
-and the saved `.d2` has to stay the source the model wrote. The text render gets no theme or
-spacing, because D2 draws text in character cells.
+and the saved `.d2` stays the model's own source, put through `d2 fmt`. The text render gets no
+theme or spacing, because D2 draws text in character cells.
 
 ELK is the engine for every profile except `tree`, which uses dagre. That is a deliberate
 exception to ADR-004: dagre draws a hierarchy the way one is normally drawn. The engines expose
@@ -70,6 +68,7 @@ instead.
 
 So in a terminal the model gets a summary line and the diagram travels in `details`. Nothing calls
 `renderResult` in print, RPC, and JSON modes, so there `content` still carries the text.
+`renderCall` draws the waiting row from the arguments, and leaves the source out of it.
 
 Pi loads TypeScript through [jiti](https://github.com/unjs/jiti) and Oh My Pi runs it natively, so
 `package.json` points both `pi.extensions` and `omp.extensions` at `src/index.ts` and no build step

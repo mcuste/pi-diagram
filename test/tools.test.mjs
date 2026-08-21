@@ -35,6 +35,9 @@ function createRenderer(answer = UNICODE_DIAGRAM) {
     renderSvg() {
       return Promise.resolve({ svg: SVG, version: "v0.8.1-HEAD" });
     },
+    formatSource({ source }) {
+      return Promise.resolve(`${source}\n`);
+    },
   };
 }
 
@@ -95,7 +98,6 @@ test("every documented field is accepted", () => {
   assert.ok(
     accepts({
       source: "a -> b",
-      language: "d2",
       title: "Request lifecycle",
       profile: "architecture",
       render: "unicode",
@@ -179,15 +181,6 @@ test("a fallback to plain ASCII is reported to the user and recorded in details"
   ]);
 });
 
-test("Mermaid source is refused with what to send instead", async () => {
-  const renderer = createRenderer();
-  await assert.rejects(
-    run(register(renderer), { source: "graph TD; A-->B", language: "mermaid" }),
-    { name: "DiagramSourceError", message: /Mermaid input is not enabled.*Send D2 source/s },
-  );
-  assert.deepEqual(renderer.calls, []);
-});
-
 test("unsafe source is refused before D2 is started", async () => {
   const renderer = createRenderer();
   await assert.rejects(run(register(renderer), { source: "s: { icon: /etc/hosts }" }), {
@@ -221,6 +214,28 @@ function registerWithImages() {
 }
 
 const theme = { fg: (_color, text) => text };
+
+test("the waiting row names the diagram, not its source", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const tool = register(createRenderer());
+
+  const titled = tool.renderCall({ source: "a -> b", title: "Request path" }, theme).render(120);
+  assert.match(titled.join("\n"), /diagram "Request path" \(explain\)/);
+
+  const untitled = tool.renderCall({ source: "a -> b\n\nc -> d", profile: "docs" }, theme);
+  assert.match(untitled.render(120).join("\n"), /diagram 2 lines \(docs\)/);
+
+  const saving = tool.renderCall(
+    { source: "a -> b", title: "Flow", save: { dir: "docs/diagrams" } },
+    theme,
+  );
+  assert.match(saving.render(120).join("\n"), /\(explain, saving into docs\/diagrams\)/);
+
+  const empty = tool.renderCall({}, theme).render(120).join("\n");
+  assert.match(empty, /diagram 0 lines \(explain\)/);
+  assert.equal(empty.includes("a -> b"), false);
+});
 
 test("an image is produced only in a terminal, since nothing else can show one", async () => {
   const { primeDisplay } = await import("../dist/display.js");

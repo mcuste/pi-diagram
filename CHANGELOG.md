@@ -16,6 +16,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- A saved `.d2` is formatted with `d2 fmt` before it is written. If D2 will not format it, the
+  source is saved as the model wrote it.
+- The row shown while a diagram renders names the title, the profile, and the save directory,
+  instead of the D2 source.
 - In a terminal the diagram is drawn by this extension, so the model reads one summary line
   instead of its own picture. Print, RPC, and JSON modes still get the text: there the result is
   all the user sees.
@@ -76,8 +80,6 @@ All notable changes to this project are documented in this file. The format foll
   Unicode output contains box drawing, and nothing but newlines can control the terminal.
 - A retry in plain ASCII when Unicode output fails, then an explanation. D2's text renderer is
   beta, and a diagram it cannot draw is never replaced with a different one.
-- An explicit refusal for `language: "mermaid"`, which the schema accepts but this version does
-  not implement.
 - Project tooling: TypeScript build, Biome, Knip, publint, dependency audit, CI with a pinned D2,
   and the tag-triggered release workflow.
 - Safety model at `docs/safety.md`, and the design proposal the implementation follows at

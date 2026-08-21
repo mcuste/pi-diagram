@@ -8,7 +8,7 @@
 
 > **Decision summary**
 >
-> Build one `diagram` tool. Use D2 as the primary agent-facing DSL; render deterministically to SVG/PNG and D2 Unicode/ASCII; let Pi/OMP adapters own terminal display; keep Mermaid as a compatibility adapter; do not ask the LLM to draw SVG manually.
+> Build one `diagram` tool. Use D2 as the primary agent-facing DSL; render deterministically to SVG/PNG and D2 Unicode/ASCII; let Pi/OMP adapters own terminal display; do not ask the LLM to draw SVG manually.
 
 Status: Implementation proposal  
 Version: 0.1  
@@ -69,7 +69,6 @@ The public API should remain renderer-agnostic: one tool named `diagram`. The mo
 | Sequence diagrams | First-class | `shape: sequence_diagram` keeps the normal object/edge syntax. [D2-SEQUENCE] |
 | Terminal fallback | Built in, beta | D2 exports Unicode or standard ASCII from the same source. [D2-EXPORTS] |
 | Documentation | Direct SVG/PNG | No browser-side Mermaid renderer is required for the final artifact. |
-| Ecosystem compatibility | Keep Mermaid adapter | Accept Mermaid later where existing docs already use it; do not force a migration in v1. |
 
 # 2. Problem statement and goals
 
@@ -96,7 +95,7 @@ The desired experience is that the model can call a tool during normal conversat
 - Interactive drag-and-drop diagram editing inside the TUI.
 - Pixel-perfect replacement for Figma, draw.io, or manually curated architecture illustrations.
 - Full support for every D2 feature. v1 intentionally exposes a safe subset.
-- Automatic bidirectional Mermaid ↔ D2 conversion for all diagram types.
+- Mermaid input in any form. D2 covers the same diagram types, so there is no adapter.
 - A custom diagram intermediate representation (IR) before evidence shows that two independent DSL renderers must be losslessly supported.
 - Bundling the proprietary TALA layout engine. Use the open ELK engine as the default; TALA may be an opt-in future capability. [D2-TALA]
 - Automatic network retrieval of icons or images referenced by model-generated diagram source.
@@ -212,9 +211,6 @@ type DiagramInput = {
   /** Diagram source. D2 by default. */
   source: string;
 
-  /** Input language; keep Mermaid for compatibility/future migration. */
-  language?: "d2" | "mermaid";
-
   /** Short label shown with the diagram and used for artifact naming. */
   title?: string;
 
@@ -238,7 +234,6 @@ type DiagramInput = {
 
 | Field | Default | Policy |
 | --- | --- | --- |
-| language | `d2` | D2 is the preferred native language. |
 | profile | `explain` | Optimized for compact in-conversation comprehension. |
 | render | `auto` | Adapter chooses image when usable; otherwise Unicode. |
 | save | unset | Ephemeral transcript diagram unless the user/documentation task needs persistent artifacts. `save.dir` has no default. |
@@ -258,7 +253,7 @@ Do not expose dozens of D2 CLI flags to the LLM. Layout engine, theme IDs, paddi
 
 ```ts
 type DiagramResultDetails = {
-  language: "d2" | "mermaid";
+  language: "d2";
   title?: string;
   renderedAs: "image" | "unicode" | "ascii" | "source";
   sourceHash: string;
@@ -368,17 +363,13 @@ A tool receiving model-generated diagram code should not expose the full D2 lang
 | TALA | Reject by default | Separate proprietary dependency; not needed for MVP. [D2-TALA] |
 | Plugins/custom layout executables | Reject | No arbitrary executable extension points. |
 
-## 6.3 Mermaid compatibility
+## 6.3 D2 is the only input language
 
-Mermaid should remain an accepted future/compatibility input because users may paste existing Mermaid blocks or ask the agent to update an existing Mermaid-backed document. Treat it as an adapter, not as the required intermediate representation. A Mermaid adapter may either render Mermaid directly or translate only supported subsets to D2; it must report when conversion is lossy. Do not promise general Mermaid → D2 equivalence.
+There is no Mermaid input and no `language` field. D2 covers every diagram type this tool targets, so a second language would add a parser, a lossiness report, and a second set of failure modes for no new capability.
 
-> **MVP scope choice**
->
-> Implement `language: "d2"` first. Keep the schema enum ready for `mermaid`, but it is acceptable for the initial build to return “Mermaid input not enabled” until the adapter is implemented.
+## 6.4 No custom Diagram IR
 
-## 6.4 Do not build a custom Diagram IR yet
-
-A normalized graph/sequence/schema IR is attractive long-term, but it significantly expands scope: the project would need parsers, semantic preservation rules, serializers, and feature negotiation across diagram types. Introduce an IR only if future requirements demand multiple interchangeable source languages or renderers with round-trip guarantees. For v1, D2 source itself is the semantic representation.
+D2 source is the semantic representation. An IR would need parsers, semantic preservation rules, serializers, and feature negotiation across diagram types, and with one source language it buys nothing.
 
 # 7. Rendering pipeline
 
@@ -617,23 +608,7 @@ A documentation generator may optionally preserve a fenced D2 block for D2-aware
 
 - Use a slug derived from `save.basename` or title; never derive paths directly from unsanitized model text.
 - Restrict `save.dir` to the project/workspace root unless the user explicitly authorizes a broader path. It is always given, never inferred.
-- Consider a generated comment in adjacent docs or a small manifest linking source hash to rendered artifacts.
 - Normalize source with `d2 fmt` only if it does not unexpectedly rewrite user-maintained files; for generated sources, formatting before persistence is preferred.
-
-## 12.5 Artifact metadata
-
-```json
-{
-  "engine": "d2",
-  "rendererVersion": "<detected version>",
-  "profile": "architecture",
-  "sourceHash": "sha256:…",
-  "layout": "elk",
-  "outputs": ["request-lifecycle.d2", "request-lifecycle.svg"]
-}
-```
-
-This manifest is optional for the MVP. The cache should track equivalent metadata internally even if no manifest is checked into the repository.
 
 # 13. Security model
 
@@ -650,7 +625,7 @@ The D2 source is produced by an LLM and may incorporate untrusted user/repositor
 | Safe-subset tokenizer | Reject imports, external/local asset syntax, links, rich/HTML-like content, and plugin/layout escape hatches before invoking D2. |
 | Absolute path defense | Do not rely on isolated `cwd` alone; imports support absolute paths. [D2-IMPORTS] |
 | No network assets | Reject URL-bearing icon/image fields. Removing proxy variables is defense-in-depth, not a network sandbox. |
-| Timeout | Use both D2 `--timeout` and harness process cancellation; default ~10s for conversational diagrams, configurable. |
+| Timeout | Use both D2 `--timeout` and harness process cancellation; about 10s for conversational diagrams. |
 | Output caps | Bound stdout/stderr and generated artifact sizes; abort on excessive output. |
 | Input cap | Bound source length (e.g., 64–128 KiB) and optionally node/edge complexity to prevent pathological layouts. |
 | Fixed layout engine | Use built-in ELK by policy; do not permit model-selected external layout plugins. |
@@ -676,8 +651,6 @@ preflight(source):
 
 ## 13.4 Defense in depth
 
-- Use a dedicated unprivileged process/container sandbox if the harness already provides one.
-- On supported platforms, optional OS-level network/filesystem sandboxing can make external access impossible even if the preflight misses a syntax case.
 - Do not pass secrets or the full parent environment to D2; use a minimal environment required for execution.
 - Keep temporary directories outside the project and delete them after the render unless diagnostics require retention in debug mode.
 - Never open generated links automatically.
@@ -733,7 +706,7 @@ sha256(
 ## 15.2 Cache policy
 
 - Cache SVG/PNG/text independently because a terminal may request another representation later.
-- Keep an LRU size bound (for example, 100–250 MB configurable) and age-based cleanup.
+- Keep an LRU size bound and age-based cleanup.
 - Persistent documentation outputs are not cache entries; they are explicit artifacts copied/written from cached products.
 - Cache only after successful validation and render.
 - Hash the renderer policy version so theme/layout changes invalidate old output.
@@ -772,7 +745,7 @@ Conversational diagrams should feel like ordinary tool calls, not build jobs. A 
 
 ## 16.3 Dependency resolution
 
-Support an explicit configuration path such as `diagram.d2Path` or `D2_BIN`, then fall back to `d2` on `PATH`. On startup or first call, run `d2 --version` and record the version. Do not auto-download executables from inside the tool. Installation may be documented separately or handled by the harness/package manager.
+Support `D2_BIN`, then fall back to `d2` on `PATH`. On startup or first call, run `d2 --version` and record the version. Do not auto-download executables from inside the tool. Installation may be documented separately or handled by the harness/package manager.
 
 # 17. Implementation plan
 
@@ -793,25 +766,14 @@ Support an explicit configuration path such as `diagram.d2Path` or `D2_BIN`, the
 - Implement `diagram-core` with D2-only input, safe-subset preflight, validation, ELK render, profiles, cache, and artifact persistence.
 - Implement Pi adapter with `diagram` tool, compact model result, custom `renderCall`/`renderResult`, image/text selection, expanded details.
 - Implement OMP adapter alongside existing `render_mermaid` without removing it.
-- Add project/global settings for enablement, D2 path, default profile, artifact directory policy, cache limits, and optional forced text mode.
-- Add unit tests, golden/snapshot fixtures, integration tests, and security tests.
+- Add unit tests, integration tests, and security tests.
 - Write user documentation with D2 examples and fallback behavior.
 
 ## Phase 2 — Product polish
 
-- Add Mermaid input adapter for existing user content.
 - Generalize/deprecate OMP `render_mermaid` behind `diagram` after compatibility testing.
 - Add profile tuning based on real-world diagrams and light/dark terminal themes.
 - Improve text fallback for unsupported D2 ASCII cases or integrate a second text renderer if evidence justifies it.
-- Add documentation helper command to regenerate all `.svg` files from sibling `.d2` sources.
-- Add optional diff/re-render workflow when source files change.
-
-## Phase 3 — Only if demanded
-
-- Introduce a normalized Diagram IR if multiple source languages need lossless interchange.
-- Add richer safe assets/icons through an allowlisted local asset registry rather than arbitrary paths/URLs.
-- Add interactive zoom/pan/fullscreen diagram inspection where the TUI supports it.
-- Add optional alternate rendering engines such as a custom SVG renderer or D2-compatible backend.
 
 # 18. Testing strategy
 
@@ -824,8 +786,7 @@ Support an explicit configuration path such as `diagram.d2Path` or `D2_BIN`, the
 | Sequence diagram | Required | Required if supported well | Long message labels |
 | ERD / sql_table | Required | Best effort + checked | FK edges to columns |
 | Class/object relationships | Required | Best effort | Inheritance/association labels |
-| State/flow with cycles | Required | Required | Cycles/crossings |
-| 20-node architecture | Required | Best effort | Performance/timeout |
+| Cycles | Required | Required | Cycles/crossings |
 | Unicode labels | Required | Required | Wide glyphs/CJK/emoji policy |
 | Very long labels | Required | Required | Wrapping/width |
 | Invalid D2 | No output | No output | Diagnostic line/column |
@@ -838,26 +799,10 @@ Support an explicit configuration path such as `diagram.d2Path` or `D2_BIN`, the
 
 - Unit: tokenizer/preflight, path safety, normalization, profile selection, cache keys, diagnostic parsing.
 - Process integration: execute a pinned/supported D2 binary against fixtures; assert exit codes, output MIME/signatures, timeout handling, cancellation, stdout caps.
-- Golden visual: store selected SVG or raster snapshots for representative fixtures; review intentionally when renderer/profile changes.
-- Terminal text snapshots: Unicode and standard ASCII outputs for a stable subset; allow version-gated updates when D2 changes.
 - Pi integration: tool registration, collapsed/expanded result, image-off fallback, print mode behavior, cancellation.
 - OMP integration: interactive card, print/RPC behavior, artifact handling, coexistence with `render_mermaid`.
 - Security: malicious D2 corpus covering imports, absolute paths, URL icons/images, rich labels, oversized input, output explosion attempts.
 - Documentation: saved `.d2` and `.svg` pairs have stable names and Markdown references resolve.
-
-## 18.3 Manual terminal matrix
-
-| Environment | Expected |
-| --- | --- |
-| Ghostty / Kitty / WezTerm under Pi regular mode | Inline PNG through native Pi Image component. |
-| iTerm2 under Pi regular mode | Inline image if Pi reports support. |
-| Pi fullscreen mode | Follow Pi’s current native capability/fallback behavior. [PI-USAGE] |
-| tmux | Use harness behavior; do not bypass it with raw protocol sequences. |
-| VS Code/unsupported image terminal | Unicode text. |
-| SSH session | Image only if harness reports it works; otherwise text. |
-| CI / redirected stdout | No graphics protocol; text or artifact path. |
-| OMP interactive | Native image/text tool rendering. |
-| OMP print/RPC/ACP | Text/structured artifact metadata, no escape-sequence assumptions. |
 
 # 19. Acceptance criteria
 
@@ -901,7 +846,7 @@ Support an explicit configuration path such as `diagram.d2Path` or `D2_BIN`, the
 | Session bloat from images | Large history files | Cache paths/handles instead of base64 where possible; compact details; bounded cache. |
 | Overuse by the model | Noisy conversations | Tool prompt criteria + complexity budgets; diagrams should replace prose, not decorate it. |
 | OMP/Pi APIs diverge | Adapter duplication | Keep core pure; isolate adapter-specific code; integration tests per harness. |
-| Layout changes across D2 versions | Visual diffs | Record renderer version; golden tests; supported-version range; intentional update process. |
+| Layout changes across D2 versions | Visual diffs | Record renderer version; supported-version range; intentional update process. |
 
 # 21. Architecture decisions (ADRs)
 
@@ -911,7 +856,7 @@ Support an explicit configuration path such as `diagram.d2Path` or `D2_BIN`, the
 | ADR-002 | Use D2 as primary agent-facing DSL. | Accepted |
 | ADR-003 | Treat SVG/PNG/text as deterministic render products, not LLM-authored output. | Accepted |
 | ADR-004 | Use ELK as default layout engine. | Accepted for MVP |
-| ADR-005 | Keep Mermaid as compatibility adapter, not mandatory intermediate. | Accepted |
+| ADR-005 | Accept D2 only. No Mermaid input and no second source language. | Accepted |
 | ADR-006 | Do not introduce custom Diagram IR in MVP. | Accepted |
 | ADR-007 | Core never emits terminal graphics escape sequences. | Accepted |
 | ADR-008 | Harness adapters own image/text transcript rendering. | Accepted |
@@ -991,14 +936,8 @@ Agent correction:
 
 # 23. Future extensions
 
-- Mermaid adapter: accept existing Mermaid source and either render directly or translate supported subsets with explicit lossiness reporting.
-- Document regeneration command: scan `docs/diagrams/**/*.d2` and update corresponding SVGs in a deterministic build step.
-- Allowlisted icon registry: expose semantic icon names (e.g., `database`, `queue`, `browser`) mapped to bundled trusted assets, never arbitrary URLs.
-- Additional profiles: e.g., `incident`, `network`, `dependency`, if real usage shows value.
-- Interactive inspection: zoom/pan or full-screen preview using harness-native custom components.
-- Diagram IR: only if cross-engine interoperability becomes a hard requirement.
+- Additional profiles: e.g., `incident`, `network`, if real usage shows value.
 - Alternate renderers: D2-compatible custom SVG renderer or a second DSL backend if D2 reaches a visual/semantic ceiling for a key use case.
-- Automated diagram linting: detect overlarge graphs, unlabeled edges, dense crossings, or duplicated labels before render.
 
 # 24. Source references
 
@@ -1039,7 +978,7 @@ PRIMARY DESIGN
 4. Shared core produces SVG, PNG, or Unicode/ASCII. The harness adapter owns terminal/TUI display. The shared core must never emit Kitty/iTerm escape sequences.
 5. Default layout engine is ELK. Visual themes/padding are controlled by renderer profiles, not arbitrary model styling.
 6. Persistent documentation defaults to `.d2` source plus `.svg`; `.png` and `.txt` are optional formats.
-7. Mermaid is not required for the MVP. Keep the public schema compatible with a future `language: "mermaid"` adapter.
+7. D2 is the only input language. Do not add a Mermaid adapter or a `language` field.
 8. Do not introduce a custom Diagram IR in the MVP.
 
 PUBLIC INPUT
@@ -1047,7 +986,6 @@ Implement an input equivalent to:
 
 type DiagramInput = {
   source: string;
-  language?: "d2" | "mermaid"; // default d2; MVP may reject mermaid as not enabled
   title?: string;
   profile?: "explain" | "architecture" | "data" | "docs";
   render?: "auto" | "image" | "unicode" | "ascii" | "source";
@@ -1128,14 +1066,13 @@ ERRORS
 Normalize diagnostics into code/message/line/column/hint where possible. Strip temp paths. Security-policy errors must be explicit. After a rendering error, allow the outer agent to fix D2 and call again; the tool itself must not call an LLM.
 
 TESTS
-Add unit, process-integration, visual/golden, terminal-text, harness-integration, and security tests. Fixtures must include:
+Add unit, process-integration, harness-integration, and security tests. Fixtures must include:
 - basic flow;
 - nested architecture;
 - sequence;
 - ER/sql_table;
 - class/object relationships;
 - cycles;
-- ~20-node architecture;
 - Unicode/long labels;
 - invalid syntax;
 - relative/absolute imports;
@@ -1153,7 +1090,7 @@ ACCEPTANCE CRITERIA
 - D2 runs with shell=false, isolated cwd, timeout and output limits;
 - Pi and OMP adapters use native TUI primitives;
 - no raw terminal image protocol logic exists in diagram-core;
-- tests pass and representative diagrams have been manually inspected in both image and text terminals.
+- tests pass.
 
 IMPLEMENTATION APPROACH
 Before editing code, inspect the current repository APIs and the existing OMP `render_mermaid` implementation / Pi tool rendering examples. Adapt names/imports to the repository rather than inventing APIs. Prefer a small, reviewable MVP over building a general diagram framework. Start with D2-only and the fixture set, then integrate the harness UI.
@@ -1161,16 +1098,15 @@ Before editing code, inspect the current repository APIs and the existing OMP `r
 DELIVERABLES
 1. shared diagram core;
 2. target harness adapter(s);
-3. settings/config;
-4. tests/fixtures;
-5. user docs;
-6. short architecture note documenting the safe subset and known D2 ASCII limitations.
+3. tests/fixtures;
+4. user docs;
+5. short architecture note documenting the safe subset and known D2 ASCII limitations.
 ```
 
 # Appendix B. Definition of done checklist
 
 - [ ] Public tool is named `diagram` and model schema is intentionally small.
-- [ ] D2 is default input; Mermaid is disabled or adapter-based, not a required stage.
+- [ ] D2 is the only input language and there is no `language` field.
 - [ ] ELK is forced by renderer policy.
 - [ ] Four rendering profiles exist and model cannot choose arbitrary theme IDs.
 - [ ] D2 safe-subset tokenizer rejects imports, local/remote assets, links, and disallowed rich content.
@@ -1185,8 +1121,7 @@ DELIVERABLES
 - [ ] Document persistence defaults to `.d2` + `.svg` and enforces workspace path safety.
 - [ ] Cache key includes D2 version and renderer-policy version.
 - [ ] D2 ASCII limitations are documented and fallback behavior is explicit.
-- [ ] Fixture suite covers architecture, sequence, ER, class/object, state/flow, Unicode, long labels, and security cases.
-- [ ] Representative PNG/SVG and Unicode outputs have been manually inspected.
+- [ ] Fixture suite covers architecture, sequence, ER, class/object, cycles, Unicode, long labels, and security cases.
 - [ ] Print/RPC/ACP/headless modes never emit raw terminal image protocol sequences.
 - [ ] User documentation includes concise D2 examples and installation/config guidance for the D2 binary.
 > **Final implementation stance**
