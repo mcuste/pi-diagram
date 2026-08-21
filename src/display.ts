@@ -183,7 +183,7 @@ export interface DiagramView {
 
 /** Reads the image once per result row: the host calls the renderer again on every redraw. */
 function read(image: DisplayImage, context: DisplayContext): string {
-  const cached = context.state["diagramImage"];
+  const cached = context.state.diagramImage;
   if (typeof cached === "object" && cached !== null) {
     const { path, encoded } = cached as { path?: unknown; encoded?: unknown };
     if (path === image.path && typeof encoded === "string") {
@@ -196,6 +196,6 @@ function read(image: DisplayImage, context: DisplayContext): string {
     throw new Error(`The image at ${image.path} is ${bytes.length} bytes.`);
   }
   const encoded = bytes.toString("base64");
-  context.state["diagramImage"] = { path: image.path, encoded };
+  context.state.diagramImage = { path: image.path, encoded };
   return encoded;
 }

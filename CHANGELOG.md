@@ -16,6 +16,9 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- The drawn image is cached beside what D2 wrote. The key is the SVG, the installed resvg
+  version, and the scale and bounds the image was drawn to, so no picture survives an upgrade
+  or a policy change. Drawing a large diagram again takes 18ms instead of 83ms.
 - A saved `.d2` is formatted with `d2 fmt` before it is written. If D2 will not format it, the
   source is saved as the model wrote it.
 - The row shown while a diagram renders names the title, the profile, and the save directory,

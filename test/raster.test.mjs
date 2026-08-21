@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { missingCodePoints, parseEmbeddedFonts, textCodePoints } from "../dist/d2/fonts.js";
-import { ImageRenderUnavailableError, parseRenderedPng, parseTargetWidth } from "../dist/raster.js";
+import {
+  ImageRenderUnavailableError,
+  parseCachedImage,
+  parseRenderedPng,
+  parseTargetWidth,
+  ResvgRasterizer,
+} from "../dist/raster.js";
 import { face } from "./fixtures/font.mjs";
 
 /** A PNG header the checks accept, with the sizes and trailer they look at. */
@@ -18,6 +24,29 @@ function png({ width = 800, height = 600, trailer = "IEND", signature = true } =
   end.write(trailer, 0, "ascii");
   return Buffer.concat([header, end]);
 }
+
+/** An entry as the store holds one: the sizes it was drawn at, then the bytes. */
+function entryFor(bytes, { width = 800, height = 600, fonts = 0 } = {}) {
+  return `${width} ${height} ${fonts}\n${bytes.toString("base64")}`;
+}
+
+/** A store in memory, so a test can see what was kept and put something else in its place. */
+function memoryCache() {
+  const entries = new Map();
+  return {
+    entries,
+    read: (key) => Promise.resolve(entries.get(key)),
+    write: (key, value) => {
+      entries.set(key, value);
+      return Promise.resolve();
+    },
+  };
+}
+
+/** No text, so the drawing needs no font and comes out the same on every machine. */
+const SOLID_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">' +
+  '<rect width="200" height="100" fill="#334155"/></svg>';
 
 function svgWith(faces, text = "api") {
   const blocks = faces
@@ -138,4 +167,65 @@ test("something that is not a font is left out", () => {
     "not a font at all, just some bytes pretending to be one",
   ).toString("base64")}"); }</style><text>a</text></svg>`;
   assert.deepEqual(parseEmbeddedFonts(svg), []);
+});
+
+test("a stored image comes back with the sizes it was drawn at", () => {
+  const image = parseCachedImage(entryFor(png({ width: 800, height: 600 })));
+  assert.equal(image.widthPx, 800);
+  assert.equal(image.heightPx, 600);
+  assert.equal(image.systemFonts, false);
+  assert.equal(parseCachedImage(entryFor(png(), { fonts: 1 })).systemFonts, true);
+});
+
+test("a stored image that disagrees with its own header is refused", () => {
+  for (const [entry, message] of [
+    [png().toString("base64"), /how it was drawn/],
+    [entryFor(png(), { width: 0 }), /how it was drawn/],
+    [entryFor(png(), { fonts: 2 }), /how it was drawn/],
+    [entryFor(png({ width: 900 })), /not the 800/],
+    [entryFor(png({ height: 601 })), /601 pixels tall/],
+    [entryFor(Buffer.alloc(10)), /did not return a PNG/],
+  ]) {
+    assert.throws(() => parseCachedImage(entry), {
+      name: "ImageRenderUnavailableError",
+      message,
+    });
+  }
+});
+
+test("a diagram already drawn as an image is not drawn again", async () => {
+  const cache = memoryCache();
+  const rasterizer = new ResvgRasterizer({ cache });
+  const drawn = await rasterizer.rasterize({ svg: SOLID_SVG, signal: undefined });
+  assert.equal(cache.entries.size, 1, "the image was not kept");
+
+  // Another image of the same size, so serving the entry shows up in the bytes that come back.
+  const size = { width: drawn.widthPx, height: drawn.heightPx };
+  const substitute = png(size);
+  cache.entries.set([...cache.entries.keys()][0], entryFor(substitute, size));
+
+  const again = await rasterizer.rasterize({ svg: SOLID_SVG, signal: undefined });
+  assert.deepEqual([...again.png], [...substitute]);
+});
+
+test("another diagram is never answered with this one's image", async () => {
+  const cache = memoryCache();
+  const rasterizer = new ResvgRasterizer({ cache });
+  await rasterizer.rasterize({ svg: SOLID_SVG, signal: undefined });
+  await rasterizer.rasterize({
+    svg: SOLID_SVG.replace("#334155", "#0f172a"),
+    signal: undefined,
+  });
+  assert.equal(cache.entries.size, 2, "the SVG is not in the key");
+});
+
+test("an image entry this build cannot read is drawn again rather than returned", async () => {
+  const cache = memoryCache();
+  const rasterizer = new ResvgRasterizer({ cache });
+  const drawn = await rasterizer.rasterize({ svg: SOLID_SVG, signal: undefined });
+  for (const key of cache.entries.keys()) {
+    cache.entries.set(key, "not an image");
+  }
+  const again = await rasterizer.rasterize({ svg: SOLID_SVG, signal: undefined });
+  assert.deepEqual([...again.png], [...drawn.png]);
 });

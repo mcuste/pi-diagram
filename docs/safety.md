@@ -108,6 +108,7 @@ ADR-011 rules out. The image is drawn locally instead, from the SVG this tool al
 | Bounded canvas | The draw width is derived from the diagram, capped at 1600 by 2400 pixels, and the resulting PNG is refused past 4 MB. |
 | Checked output | The bytes have to be a PNG, with an image header, a complete trailer, an area, and the width that was asked for. A silently ignored option cannot reach the terminal as a broken image. |
 | Out of the model's context | The PNG goes to the temp store and is read back when the row is displayed. Its bytes never enter the tool result the model reads. |
+| Kept between sessions | The image is also held in the render cache, in a private directory outside the repository, and dropped after a week. |
 | Out of the repository | Only `formats: ["png"]` with `save.dir` writes one into the workspace, through the same path checks as any other artifact. |
 | Never sent blind | A terminal with no image protocol is not sent an image, and none is drawn for it. |
 

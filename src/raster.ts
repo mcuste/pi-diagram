@@ -1,6 +1,8 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { cacheKeyOf, FileCache, type RenderCache } from "./cache.js";
 import {
   type EmbeddedFont,
   missingCodePoints,
@@ -21,6 +23,17 @@ const MIN_WIDTH_PX = 480;
 const MAX_WIDTH_PX = 1600;
 const MAX_HEIGHT_PX = 2400;
 const MAX_PNG_BYTES = 4 * 1024 * 1024;
+const DEFAULT_FONT_FAMILY = "Source Sans Pro";
+
+/** Everything besides the SVG and resvg itself that decides the picture. */
+const IMAGE_POLICY = [
+  "png",
+  String(SCALE),
+  String(MIN_WIDTH_PX),
+  String(MAX_WIDTH_PX),
+  String(MAX_HEIGHT_PX),
+  DEFAULT_FONT_FAMILY,
+];
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -105,9 +118,37 @@ export function parseTargetWidth(naturalWidthPx: number, naturalHeightPx: number
   return Math.max(1, Math.round(Math.min(wanted, MAX_WIDTH_PX, byHeight)));
 }
 
+/** The store holds text, so an image travels as base64 behind the sizes it was drawn at. */
+function formatCachedImage(image: RasterImage): string {
+  const drawn = `${image.widthPx} ${image.heightPx} ${image.systemFonts ? 1 : 0}`;
+  return `${drawn}\n${Buffer.from(image.png).toString("base64")}`;
+}
+
+/** Parsed again on the way out, so a corrupt entry is drawn again rather than displayed. */
+export function parseCachedImage(entry: string): RasterImage {
+  const split = entry.indexOf("\n");
+  const [width, height, fonts] = entry.slice(0, Math.max(split, 0)).split(" ");
+  const widthPx = Number(width);
+  const heightPx = Number(height);
+  const sized =
+    Number.isSafeInteger(widthPx) && widthPx > 0 && Number.isSafeInteger(heightPx) && heightPx > 0;
+  if (split === -1 || !sized || (fonts !== "0" && fonts !== "1")) {
+    throw new ImageRenderUnavailableError("The stored image does not say how it was drawn.");
+  }
+
+  const image = parseRenderedPng(Buffer.from(entry.slice(split + 1), "base64"), widthPx);
+  if (image.heightPx !== heightPx) {
+    throw new ImageRenderUnavailableError(
+      `The stored image is ${image.heightPx} pixels tall, not the ${heightPx} it was drawn at.`,
+    );
+  }
+  return { ...image, systemFonts: fonts === "1" };
+}
+
 type ResvgModule = typeof import("@resvg/resvg-js");
 
 let loaded: Promise<ResvgModule> | undefined;
+let installed: Promise<string | undefined> | undefined;
 
 /** A native binary per platform, loaded lazily so an unsupported one cannot break text diagrams. */
 async function load(): Promise<ResvgModule> {
@@ -124,40 +165,85 @@ async function load(): Promise<ResvgModule> {
 }
 
 export class ResvgRasterizer implements SvgRasterizer {
+  private readonly cache: RenderCache;
+
+  constructor(dependencies: { readonly cache?: RenderCache } = {}) {
+    this.cache = dependencies.cache ?? new FileCache();
+  }
+
   async rasterize(request: RasterRequest): Promise<RasterImage> {
     if (request.signal?.aborted === true) {
       throw new CommandCancelledError("Drawing the diagram");
     }
 
-    const { Resvg } = await load();
-    const fonts = parseEmbeddedFonts(request.svg);
-    const missing = missingCodePoints(fonts, textCodePoints(request.svg));
-    const directory = await mkdtemp(join(tmpdir(), "pi-diagram-fonts-"));
-    try {
-      const fontFiles = await writeFonts(directory, fonts);
-      const font = {
-        fontFiles,
-        // Labels the diagram's own font cannot draw would otherwise be empty boxes.
-        loadSystemFonts: missing.length > 0,
-        defaultFontFamily: "Source Sans Pro",
-      };
-
-      const probe = new Resvg(request.svg, { font });
-      const widthPx = parseTargetWidth(probe.width, probe.height);
-      const drawn = new Resvg(request.svg, { font, fitTo: { mode: "width", value: widthPx } });
-      const image = parseRenderedPng(drawn.render().asPng(), widthPx);
-      return { ...image, systemFonts: missing.length > 0 };
-    } catch (error) {
-      if (error instanceof ImageRenderUnavailableError || error instanceof CommandCancelledError) {
-        throw error;
+    const key = await imageKey(request.svg);
+    const stored = key === undefined ? undefined : await this.cache.read(key);
+    if (stored !== undefined) {
+      try {
+        return parseCachedImage(stored);
+      } catch {
+        // An entry this build cannot read is no better than a missing one.
       }
-      throw new ImageRenderUnavailableError(
-        `The SVG could not be drawn as an image: ${(error as Error).message}`,
-        { cause: error },
-      );
-    } finally {
-      await rm(directory, { recursive: true, force: true });
     }
+
+    const image = await draw(request.svg);
+    if (key !== undefined) {
+      await this.cache.write(key, formatCachedImage(image));
+    }
+    return image;
+  }
+}
+
+/** Undefined when the version is unknown, which keeps that image out of the store. */
+async function imageKey(svg: RenderedSvg): Promise<string | undefined> {
+  const version = await resvgVersion();
+  return version === undefined ? undefined : cacheKeyOf([...IMAGE_POLICY, version, svg]);
+}
+
+/** resvg draws differently between versions, so a stored image belongs to the one that drew it. */
+async function resvgVersion(): Promise<string | undefined> {
+  installed ??= (async (): Promise<string | undefined> => {
+    try {
+      const manifest = createRequire(import.meta.url).resolve("@resvg/resvg-js/package.json");
+      const parsed: unknown = JSON.parse(await readFile(manifest, "utf8"));
+      const found = (parsed as { version?: unknown }).version;
+      return typeof found === "string" ? found : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  return installed;
+}
+
+async function draw(svg: RenderedSvg): Promise<RasterImage> {
+  const { Resvg } = await load();
+  const fonts = parseEmbeddedFonts(svg);
+  const missing = missingCodePoints(fonts, textCodePoints(svg));
+  const directory = await mkdtemp(join(tmpdir(), "pi-diagram-fonts-"));
+  try {
+    const fontFiles = await writeFonts(directory, fonts);
+    const font = {
+      fontFiles,
+      // Labels the diagram's own font cannot draw would otherwise be empty boxes.
+      loadSystemFonts: missing.length > 0,
+      defaultFontFamily: DEFAULT_FONT_FAMILY,
+    };
+
+    const probe = new Resvg(svg, { font });
+    const widthPx = parseTargetWidth(probe.width, probe.height);
+    const drawn = new Resvg(svg, { font, fitTo: { mode: "width", value: widthPx } });
+    const image = parseRenderedPng(drawn.render().asPng(), widthPx);
+    return { ...image, systemFonts: missing.length > 0 };
+  } catch (error) {
+    if (error instanceof ImageRenderUnavailableError || error instanceof CommandCancelledError) {
+      throw error;
+    }
+    throw new ImageRenderUnavailableError(
+      `The SVG could not be drawn as an image: ${(error as Error).message}`,
+      { cause: error },
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 }
 
