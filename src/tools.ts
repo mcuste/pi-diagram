@@ -1,15 +1,17 @@
 import { type Static, type TSchema, Type } from "typebox";
 import { parseArtifactNames, workspacePaths } from "./artifacts.js";
-import { type Diagnostic, DiagramSourceError, formatDiagnostic } from "./d2/diagnostics.js";
-import type { ProfileName } from "./d2/profiles.js";
+import { type Diagnostic, formatDiagnostic } from "./d2/diagnostics.js";
+import { DEFAULT_PROFILE, type ProfileName } from "./d2/profiles.js";
 import { D2Cli, type D2Renderer } from "./d2/runner.js";
 import {
   type Component,
+  type DiagramCallView,
   type DisplayContext,
   type DisplayTheme,
   displayLoaded,
   imagesSupported,
   primeDisplay,
+  renderDiagramCall,
   renderDiagramResult,
 } from "./display.js";
 import { ResvgRasterizer, type SvgRasterizer } from "./raster.js";
@@ -26,12 +28,7 @@ const MAX_PATH_LENGTH = 255;
 const DiagramSource = Type.String({
   minLength: 1,
   maxLength: MAX_SOURCE_LENGTH,
-  description:
-    "Diagram source in the declarative language named by `language`. Imports, local images, and remote icons are rejected.",
-});
-
-const DiagramLanguage = Type.Union([Type.Literal("d2"), Type.Literal("mermaid")], {
-  description: "Source language. D2 is the native language; Mermaid exists for existing content.",
+  description: "Diagram source in D2. Imports, local images, and remote icons are rejected.",
 });
 
 const DiagramTitle = Type.String({
@@ -114,7 +111,6 @@ const DiagramSave = Type.Object(
 const DiagramParameters = Type.Object(
   {
     source: DiagramSource,
-    language: Type.Optional(DiagramLanguage),
     title: Type.Optional(DiagramTitle),
     profile: Type.Optional(DiagramProfile),
     render: Type.Optional(DiagramRender),
@@ -222,6 +218,8 @@ interface ToolDefinition<TParameters extends TSchema, TDetails> {
     | ((args: Partial<Static<TParameters>>) => "shared" | "exclusive");
   readonly executionMode?: "sequential" | "parallel";
   readonly formatApprovalDetails?: (args: unknown) => string | readonly string[] | undefined;
+  /** Arguments can still be arriving, so every field is read defensively. */
+  readonly renderCall?: (args: Partial<Static<TParameters>>, theme: DisplayTheme) => Component;
   /** Throwing here is the host's signal to render the result its own way. */
   readonly renderResult?: (
     result: { readonly content: readonly TextContent[]; readonly details: TDetails },
@@ -287,17 +285,18 @@ function readSave(args: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-/** Refuses what the schema accepts but this build cannot honour, rather than ignoring it. */
-function assertSupported(parameters: DiagramParameters): void {
-  if (parameters.language !== undefined && parameters.language !== "d2") {
-    throw new DiagramSourceError("Mermaid input is not enabled in this version.", [
-      {
-        code: "D2_SOURCE",
-        message: `language ${JSON.stringify(parameters.language)} has no adapter yet.`,
-        hint: "Send D2 source instead.",
-      },
-    ]);
-  }
+/** The waiting row names the diagram and the policy, never the source. */
+function callView(args: Partial<DiagramParameters>): DiagramCallView {
+  const title = typeof args.title === "string" ? args.title.trim() : "";
+  const source = typeof args.source === "string" ? args.source : "";
+  const lines = source.split("\n").filter((line) => line.trim().length > 0).length;
+  const directory = readSave(args)?.dir;
+  const saving = typeof directory === "string" ? `, saving into ${directory}` : "";
+  const profile = typeof args.profile === "string" ? args.profile : DEFAULT_PROFILE.name;
+  return {
+    subject: title === "" ? `${lines} line${lines === 1 ? "" : "s"}` : `"${title}"`,
+    note: `(${profile}${saving})`,
+  };
 }
 
 /** How each representation is named to the reader. */
@@ -408,11 +407,13 @@ export function registerDiagramTools(
     parameters: DiagramParameters,
     approval: approvalFor,
     formatApprovalDetails: approvalDetails,
+    renderCall(args, theme) {
+      return renderDiagramCall(callView(args), theme);
+    },
     loadMode: "discoverable",
     concurrency: "shared",
     executionMode: "parallel",
     async execute(_toolCallId, parameters, signal, _onUpdate, context) {
-      assertSupported(parameters);
       // Anywhere else the host prints `content`, so the diagram has to travel in it.
       const drawnHere = context.mode === "tui" && displayLoaded();
       const rendering = await renderDiagram(

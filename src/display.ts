@@ -90,18 +90,40 @@ export function displayLoaded(): boolean {
   return tui !== undefined;
 }
 
-/** Throws only when the library is missing, which the host takes as a request to render text. */
+/** Throws when the library is missing, which the host takes as a request to draw the row itself. */
+function loadedModule(): TuiModule {
+  if (tui === undefined) {
+    primeDisplay();
+    throw new Error("The TUI library is not loaded.");
+  }
+  return tui;
+}
+
+export interface DiagramCallView {
+  /** What is being drawn: the title, or a line count when there is no title. */
+  readonly subject: string;
+  /** The profile, and the directory when the call also saves files. */
+  readonly note: string;
+}
+
+/** The row while D2 runs. The source would fill the transcript, so it is not shown. */
+export function renderDiagramCall(view: DiagramCallView, theme: DisplayTheme): Component {
+  const module = loadedModule();
+  const text = [
+    theme.fg("toolTitle", "diagram "),
+    theme.fg("accent", view.subject),
+    " ",
+    theme.fg("muted", view.note),
+  ].join("");
+  return new module.Text(text, 0, 0);
+}
+
 export function renderDiagramResult(
   view: DiagramView,
   theme: DisplayTheme,
   context: DisplayContext,
 ): Component {
-  const module = tui;
-  if (module === undefined) {
-    primeDisplay();
-    throw new Error("The TUI library is not loaded.");
-  }
-
+  const module = loadedModule();
   const container = new module.Container();
   const line = (text: string): void => {
     container.addChild(new module.Text(theme.fg("toolOutput", text), 0, 0));

@@ -160,7 +160,9 @@ export async function renderDiagram(
   let saved: readonly WrittenArtifact[] = [];
   if (target !== undefined && names !== undefined) {
     // Every text artifact ends with a newline, the way any other checked-in text file does.
-    const contents = new Map<ArtifactFormat, string | Uint8Array>([["source", `${source}\n`]]);
+    const contents = new Map<ArtifactFormat, string | Uint8Array>([
+      ["source", await sourceToSave(renderer, source, request.signal)],
+    ]);
     if (svg !== undefined) {
       contents.set("svg", `${svg.svg}\n`);
     }
@@ -222,6 +224,22 @@ export async function renderDiagram(
     saved,
     notes,
   };
+}
+
+/** A checked-in `.d2` is read and edited by people later, so it is saved formatted. */
+async function sourceToSave(
+  renderer: D2Renderer,
+  source: SafeD2Source,
+  signal: AbortSignal | undefined,
+): Promise<string> {
+  try {
+    const formatted = await renderer.formatSource({ source, signal });
+    // Parsed again, because nothing reaches the workspace without passing the safe subset.
+    return `${parseSafeSource(normalizeSource(formatted).text)}\n`;
+  } catch {
+    // Formatting is cosmetic, so what the model wrote is saved as it is.
+    return `${source}\n`;
+  }
 }
 
 /** An image that cannot be drawn is a display fallback, not a failure the model should correct. */

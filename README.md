@@ -119,7 +119,6 @@ language.
 | `source` | The diagram, in D2 |
 | `title` | Label shown above the diagram |
 | `render` | `auto` and `image` show a picture where the terminal can, `unicode` draws box drawing, `ascii` plain 7-bit, `source` echoes the D2 |
-| `language` | `d2`. `mermaid` is in the schema but has no adapter yet |
 | `profile` | What the diagram is for. It sets the layout engine, theme, and spacing |
 | `formats` | Files to produce: `source`, `svg`, `png`, `txt`. Written outside the repository |
 | `save` | Also copy them into the repository. `dir` is required |
@@ -189,7 +188,8 @@ unless it is asked for, and the repository is never the default:
 | `{ source, title, save: { dir: "docs/diagrams" } }` | copied into the repository | write, prompts with the exact files |
 
 `save.dir` has no default. There is no directory convention that holds across repositories, so
-the destination has to be named. Only pass `save` when the user asked to keep the diagram.
+the destination has to be named. Only pass `save` when the user asked to keep the diagram. A
+saved `.d2` is put through `d2 fmt` first, because people edit it later.
 
 A saved pair is editable source plus a viewable rendering:
 

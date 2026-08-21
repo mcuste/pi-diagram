@@ -13,7 +13,12 @@ const ASCII_DIAGRAM = "+----+\n| a  |\n+----+";
 const SVG = '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>';
 
 /** Answers with a diagram, or fails, per ASCII mode. Records what it was asked for. */
-function createRenderer({ extended = UNICODE_DIAGRAM, standard = ASCII_DIAGRAM, svg = SVG } = {}) {
+function createRenderer({
+  extended = UNICODE_DIAGRAM,
+  standard = ASCII_DIAGRAM,
+  svg = SVG,
+  formatted,
+} = {}) {
   const calls = [];
   return {
     calls,
@@ -31,6 +36,13 @@ function createRenderer({ extended = UNICODE_DIAGRAM, standard = ASCII_DIAGRAM, 
         return Promise.reject(svg);
       }
       return Promise.resolve({ svg, version: "v0.8.1-HEAD" });
+    },
+    formatSource({ source, signal }) {
+      calls.push({ kind: "format", source, signal });
+      if (formatted instanceof Error) {
+        return Promise.reject(formatted);
+      }
+      return Promise.resolve(formatted ?? `${source}\n`);
     },
   };
 }
@@ -259,6 +271,52 @@ test("a text failure still saves the SVG and shows the source instead", async ()
     assert.ok(rendering.notes.some((note) => note.includes("shown as source")));
     // Why the text is missing, for the expanded row.
     assert.deepEqual(rendering.diagnostics, failure.diagnostics);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a saved .d2 holds what d2 fmt wrote, not what the model typed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-render-"));
+  try {
+    const renderer = createRenderer({ formatted: "a -> b\n" });
+    await renderDiagram(
+      { source: "a->b", title: "Flow", formats: ["source"], save: { dir: "docs" }, cwd: root },
+      renderer,
+    );
+    assert.equal(await readFile(join(root, "docs/flow.d2"), "utf8"), "a -> b\n");
+    assert.deepEqual(
+      renderer.calls.filter((call) => call.kind === "format").map((call) => call.source),
+      ["a->b"],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a source D2 will not format is saved the way the model wrote it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-render-"));
+  try {
+    const renderer = createRenderer({ formatted: new Error("fmt is unavailable") });
+    await renderDiagram(
+      { source: "a->b", title: "Flow", formats: ["source"], save: { dir: "docs" }, cwd: root },
+      renderer,
+    );
+    assert.equal(await readFile(join(root, "docs/flow.d2"), "utf8"), "a->b\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("formatting cannot smuggle anything past the safe subset", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-render-"));
+  try {
+    const renderer = createRenderer({ formatted: "s: { icon: /etc/hosts }\n" });
+    await renderDiagram(
+      { source: "a -> b", title: "Flow", formats: ["source"], save: { dir: "docs" }, cwd: root },
+      renderer,
+    );
+    assert.equal(await readFile(join(root, "docs/flow.d2"), "utf8"), "a -> b\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
