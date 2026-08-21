@@ -36,6 +36,13 @@ parsed again, so nothing skips the checks in `parseRenderedText` and `parseRende
 cache operation is best-effort, and a corrupt entry is drawn again instead of being returned.
 Rendering the same diagram twice costs 642ms then 60ms, and only the version probe still runs.
 
+The drawn image is kept in the same store, keyed on the SVG it came from, the installed resvg
+version, and the scale and bounds in `src/raster.ts`. It is held as base64 behind the sizes it was
+drawn at, and a hit goes back through `parseRenderedPng`, so a corrupt entry is drawn again rather
+than displayed. Nothing is stored when the resvg version cannot be read, because an image could
+then outlive the renderer that drew it. Redrawing a large diagram from the store costs 18ms instead
+of 83ms.
+
 A profile reaches D2 as CLI flags, not as text added to the source: flags win over source config,
 and the saved `.d2` stays the model's own source, put through `d2 fmt`. The text render gets no
 theme or spacing, because D2 draws text in character cells.
