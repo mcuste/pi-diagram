@@ -64,9 +64,12 @@ its rows and draw nothing. `tuiSpecifier` resolves it from the host entry point 
 bare import; a local checkout would otherwise use its own copy, at its own version.
 
 Whether a terminal can show an image is known when the result is displayed, not when it is
-rendered, so both representations are always prepared. `renderResult` picks one. Throwing from
-there is how the host is told to render its own text, which is why the text path needs no
-duplicate in this package.
+rendered, so both representations are always prepared. `renderResult` draws whichever fits, and
+throws only when the terminal library is missing, which tells the host to print the content
+instead.
+
+So in a terminal the model gets a summary line and the diagram travels in `details`. Nothing calls
+`renderResult` in print, RPC, and JSON modes, so there `content` still carries the text.
 
 Pi loads TypeScript through [jiti](https://github.com/unjs/jiti) and Oh My Pi runs it natively, so
 `package.json` points both `pi.extensions` and `omp.extensions` at `src/index.ts` and no build step

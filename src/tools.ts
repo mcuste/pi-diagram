@@ -1,15 +1,16 @@
 import { type Static, type TSchema, Type } from "typebox";
 import { parseArtifactNames, workspacePaths } from "./artifacts.js";
-import { DiagramSourceError } from "./d2/diagnostics.js";
+import { type Diagnostic, DiagramSourceError, formatDiagnostic } from "./d2/diagnostics.js";
 import type { ProfileName } from "./d2/profiles.js";
 import { D2Cli, type D2Renderer } from "./d2/runner.js";
 import {
   type Component,
   type DisplayContext,
   type DisplayTheme,
+  displayLoaded,
   imagesSupported,
   primeDisplay,
-  renderDiagramImage,
+  renderDiagramResult,
 } from "./display.js";
 import { ResvgRasterizer, type SvgRasterizer } from "./raster.js";
 import { type DiagramRendering, type Representation, renderDiagram } from "./render.js";
@@ -155,7 +156,10 @@ const DIAGRAM_DESCRIPTION = [
   "neither. A terminal that can show images shows one without being asked.",
 ].join("\n");
 
-/** The text diagram travels in `content`, which both hosts display without a custom renderer. */
+/**
+ * `content` goes to the model and `details` only to the screen, so the diagram travels in
+ * `details` whenever this package draws the row itself.
+ */
 interface DiagramToolDetails {
   readonly language: "d2";
   readonly title?: string;
@@ -163,6 +167,11 @@ interface DiagramToolDetails {
   readonly requested: Static<typeof DiagramRender>;
   readonly renderedAs: DisplayedAs;
   readonly image?: { readonly path: string; readonly widthPx: number; readonly heightPx: number };
+  /** The diagram as text, for the renderer and as the fallback for an image. */
+  readonly textPreview: string;
+  /** The D2 source, shown in the expanded row. */
+  readonly source: string;
+  readonly diagnostics?: readonly Diagnostic[];
   readonly sourceHash: string;
   readonly lineCount: number;
   readonly widthCells: number;
@@ -291,7 +300,19 @@ function assertSupported(parameters: DiagramParameters): void {
   }
 }
 
-function contentFor(rendering: DiagramRendering): string {
+/** How each representation is named to the reader. */
+const DRAWN: Readonly<Record<DisplayedAs, string>> = {
+  image: "an image",
+  unicode: "box drawing",
+  ascii: "plain ASCII",
+  source: "D2 source",
+};
+
+/**
+ * What the model reads. The diagram is left out when this package draws the row, and the summary
+ * says so, because an empty-looking result invites the model to render again.
+ */
+function contentFor(rendering: DiagramRendering, drawnHere: boolean): string {
   const paths = rendering.saved.map((artifact) => artifact.path).join(", ");
   const saved =
     rendering.saved.length === 0
@@ -299,13 +320,16 @@ function contentFor(rendering: DiagramRendering): string {
       : rendering.saved[0]?.location === "workspace"
         ? `saved in the repository: ${paths}`
         : `saved outside the repository: ${paths}`;
-  const blocks = [
-    rendering.title,
-    rendering.text,
-    saved,
-    ...rendering.notes.map((note) => `note: ${note}`),
-  ];
-  return blocks.filter((block): block is string => Boolean(block)).join("\n\n");
+  const blocks = drawnHere ? [summaryFor(rendering)] : [rendering.title, rendering.text];
+  return [...blocks, saved, ...rendering.notes.map((note) => `note: ${note}`)]
+    .filter((block): block is string => Boolean(block))
+    .join("\n\n");
+}
+
+function summaryFor(rendering: DiagramRendering): string {
+  const named = rendering.title === undefined ? "the diagram" : `"${rendering.title}"`;
+  const as = DRAWN[rendering.image === undefined ? rendering.renderedAs : "image"];
+  return `Drew ${named} as ${as}. It is on the user's screen, so it is not repeated here.`;
 }
 
 function outputsFor(rendering: DiagramRendering): Readonly<Record<string, string>> | undefined {
@@ -338,6 +362,9 @@ function detailsFor(
     requested: parameters.render ?? "auto",
     renderedAs: rendering.image === undefined ? rendering.renderedAs : "image",
     ...(rendering.image === undefined ? {} : { image: rendering.image }),
+    textPreview: rendering.text,
+    source: rendering.source,
+    ...(rendering.diagnostics.length === 0 ? {} : { diagnostics: rendering.diagnostics }),
     sourceHash: rendering.sourceHash,
     lineCount: rendering.lineCount,
     widthCells: rendering.widthCells,
@@ -352,6 +379,18 @@ function pathsFor(details: DiagramToolDetails): readonly string[] {
   return Object.entries(details.outputs ?? {})
     .filter(([key]) => key !== "location")
     .map(([, path]) => path);
+}
+
+/** The expanded row: how it was drawn, where the files are, what went wrong, and the source. */
+function expandedLines(details: DiagramToolDetails): readonly string[] {
+  const version = details.d2Version === undefined ? "" : `, D2 ${details.d2Version}`;
+  const lines = [
+    `Drawn as ${DRAWN[details.renderedAs]}, profile ${details.profile}${version}`,
+    ...pathsFor(details),
+    ...(details.diagnostics ?? []).map(formatDiagnostic),
+  ];
+  // The collapsed row already shows the source when that is what was drawn.
+  return details.renderedAs === "source" ? lines : [...lines, "", details.source];
 }
 
 export function registerDiagramTools(
@@ -374,6 +413,8 @@ export function registerDiagramTools(
     executionMode: "parallel",
     async execute(_toolCallId, parameters, signal, _onUpdate, context) {
       assertSupported(parameters);
+      // Anywhere else the host prints `content`, so the diagram has to travel in it.
+      const drawnHere = context.mode === "tui" && displayLoaded();
       const rendering = await renderDiagram(
         {
           source: parameters.source,
@@ -383,29 +424,27 @@ export function registerDiagramTools(
           formats: parameters.formats,
           save: parameters.save,
           cwd: context.cwd,
-          // Drawing an image a terminal cannot show would cost an SVG render for nothing.
-          images: context.mode === "tui" && imagesSupported() !== false,
+          // Drawing an image nothing can show would cost an SVG render for nothing.
+          images: drawnHere && imagesSupported() !== false,
           signal,
         },
         renderer,
         rasterizer,
       );
       return {
-        content: [{ type: "text", text: contentFor(rendering) }],
+        content: [{ type: "text", text: contentFor(rendering, drawnHere) }],
         details: detailsFor(parameters, rendering),
       };
     },
     renderResult(result, options, theme, context) {
-      const image = result.details.image;
-      if (image === undefined) {
-        throw new Error("This diagram has no image, so the host renders its text.");
-      }
-      return renderDiagramImage(
+      const details = result.details;
+      return renderDiagramResult(
         {
-          image,
-          title: result.details.title,
-          paths: pathsFor(result.details),
-          notes: result.details.notes ?? [],
+          image: details.image,
+          title: details.title,
+          text: details.textPreview,
+          notes: details.notes ?? [],
+          details: expandedLines(details),
         },
         theme,
         { showImages: context.showImages, expanded: options.expanded, state: context.state },

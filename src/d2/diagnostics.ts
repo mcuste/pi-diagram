@@ -45,7 +45,8 @@ function formatDiagnostics(diagnostics: readonly Diagnostic[]): string {
   return diagnostics.map(formatDiagnostic).join("\n");
 }
 
-function formatDiagnostic(diagnostic: Diagnostic): string {
+/** One line, indented, the way it reads inside a refusal message. */
+export function formatDiagnostic(diagnostic: Diagnostic): string {
   const at =
     diagnostic.line === undefined
       ? ""

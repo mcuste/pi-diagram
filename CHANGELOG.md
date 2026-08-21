@@ -16,6 +16,11 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- In a terminal the diagram is drawn by this extension, so the model reads one summary line
+  instead of its own picture. Print, RPC, and JSON modes still get the text: there the result is
+  all the user sees.
+- The expanded result row adds the render mode, the profile, the D2 version, the file paths,
+  diagnostics, and the D2 source.
 - A render cache. The key is the source, the binary, the D2 version, and the arguments D2 was
   given, which carry the profile, so a theme or spacing change cannot serve an old picture. The
   store lives outside the repository, holds 64 MB for a week, and drops the least recently used

@@ -226,7 +226,8 @@ type DiagramInput = {
 
   /** Optional persistence request for documentation/work products. */
   save?: {
-    dir?: string;
+    /** Where the files go. Required, no default. */
+    dir: string;
     basename?: string;
     formats?: Array<"source" | "svg" | "png" | "txt">;
   };
@@ -240,7 +241,7 @@ type DiagramInput = {
 | language | `d2` | D2 is the preferred native language. |
 | profile | `explain` | Optimized for compact in-conversation comprehension. |
 | render | `auto` | Adapter chooses image when usable; otherwise Unicode. |
-| save | unset | Ephemeral transcript diagram unless the user/documentation task needs persistent artifacts. |
+| save | unset | Ephemeral transcript diagram unless the user/documentation task needs persistent artifacts. `save.dir` has no default. |
 | save.formats | `source`, `svg` | If persistence is requested, retain editable D2 and viewable SVG. |
 | layout | not public | ELK by policy; model should not normally choose layout engines. |
 | theme | not public | Profile/harness controls light/dark rendering. |
@@ -596,17 +597,9 @@ Interactive OMP should show image/text through existing TUI tool rendering. Prin
 
 This solves the original editor problem without abandoning text-native authoring. D2 source remains diffable and LLM-editable; ordinary Markdown can reference the SVG directly, so the documentation consumer does not need a Mermaid runtime or D2 plugin.
 
-## 12.2 Recommended directory convention
+## 12.2 The caller names the directory
 
-```text
-docs/
-  architecture.md
-  diagrams/
-    request-lifecycle.d2
-    request-lifecycle.svg
-    request-lifecycle.png   # optional compatibility
-    request-lifecycle.txt   # optional terminal/plain-text sidecar
-```
+`save.dir` is required. No directory convention holds across repositories, so a save with no directory is refused rather than written to a guessed path.
 
 ## 12.3 Markdown embedding
 
@@ -623,8 +616,7 @@ A documentation generator may optionally preserve a fenced D2 block for D2-aware
 ## 12.4 Stable filenames
 
 - Use a slug derived from `save.basename` or title; never derive paths directly from unsanitized model text.
-- Restrict `save.dir` to the project/workspace root unless the user explicitly authorizes a broader path.
-- If a filename exists and content differs, follow harness edit/overwrite policy rather than silently clobbering.
+- Restrict `save.dir` to the project/workspace root unless the user explicitly authorizes a broader path. It is always given, never inferred.
 - Consider a generated comment in adjacent docs or a small manifest linking source hash to rendered artifacts.
 - Normalize source with `d2 fmt` only if it does not unexpectedly rewrite user-maintained files; for generated sources, formatting before persistence is preferred.
 
@@ -662,7 +654,7 @@ The D2 source is produced by an LLM and may incorporate untrusted user/repositor
 | Output caps | Bound stdout/stderr and generated artifact sizes; abort on excessive output. |
 | Input cap | Bound source length (e.g., 64–128 KiB) and optionally node/edge complexity to prevent pathological layouts. |
 | Fixed layout engine | Use built-in ELK by policy; do not permit model-selected external layout plugins. |
-| Sanitized save paths | Resolve target path, ensure it remains inside allowed workspace roots, and apply existing overwrite permissions. |
+| Sanitized save paths | Resolve target path and ensure it remains inside allowed workspace roots. |
 | Renderer version check | Require a supported D2 version range and fail with installation guidance if absent/incompatible. |
 | SVG handling | Treat generated SVG as active-ish web content. Avoid raw HTML/links in safe subset and use trusted embedding contexts; consider sanitization if later allowing richer labels. |
 
@@ -702,7 +694,7 @@ preflight(source):
 | Text renderer | ASCII beta limitation | Attempt standard ASCII once, then surface graphical artifact/source fallback. |
 | Dependency | D2 binary missing | Return install/config guidance; do not attempt arbitrary downloads during tool execution. |
 | Timeout | Layout exceeds budget | Suggest reducing diagram size or splitting it. |
-| Save path | Outside workspace / overwrite denied | Render can still succeed ephemerally; saving returns a separate path policy error. |
+| Save path | Outside workspace | Render can still succeed ephemerally; saving returns a separate path policy error. |
 | Harness display | Image disabled/unsupported | Fall back to text automatically; not an error. |
 
 ## 14.2 Repair loop
@@ -1060,7 +1052,7 @@ type DiagramInput = {
   profile?: "explain" | "architecture" | "data" | "docs";
   render?: "auto" | "image" | "unicode" | "ascii" | "source";
   save?: {
-    dir?: string;
+    dir: string; // required: no default directory
     basename?: string;
     formats?: Array<"source" | "svg" | "png" | "txt">;
   };

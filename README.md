@@ -160,14 +160,23 @@ to forward the protocol: tmux needs `allow-passthrough`, and herdr needs
 `experimental.kitty_graphics`.
 
 The image never enters the model's context. It is written to a private temporary directory and
-read back when the row is displayed, so a conversation full of diagrams costs the same as a
-conversation full of text.
+read back when the row is displayed.
 
 D2 exports PNG by driving a headless browser it downloads on first use, which this tool will not
 do during a call. Instead the SVG it already produces is rasterized locally by
 [resvg](https://github.com/yisibl/resvg-js), which needs no browser and no network. Labels are
 drawn with the fonts the SVG carries, so the picture matches the boxes D2 measured. Characters
 those fonts do not cover, such as CJK, fall back to the fonts on the machine and say so.
+
+## What the model gets back
+
+In a terminal this extension draws the row, so the model reads one line: `Drew "Request path" as
+an image. It is on the user's screen, so it is not repeated here.` Saved paths and notes come with
+it, so a conversation full of diagrams costs about what a conversation of text costs. Print, RPC,
+and JSON modes have no row to draw, so there the diagram is the result text.
+
+Expanding a row adds the render mode, the profile, the D2 version, the file paths, diagnostics,
+and the source.
 
 ## Where files go
 
