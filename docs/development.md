@@ -5,16 +5,28 @@
 | Path | Contents |
 | --- | --- |
 | `src/index.ts` | Extension entry point; both hosts load it directly |
-| `src/tools.ts` | The public `diagram` tool: schema, approval tier, and execution |
+| `src/tools.ts` | The `diagram` tool: schema, approval tier, and result shape |
+| `src/render.ts` | Representation choice, the text fallback ladder, and transcript limits |
+| `src/normalize.ts` | Source normalization and title parsing |
+| `src/d2/preflight.ts` | The safe-subset scanner |
+| `src/d2/runner.ts` | D2 discovery, version check, and the isolated render |
+| `src/d2/diagnostics.ts` | The diagnostic vocabulary and parsing of D2's errors |
+| `src/process.ts` | Child process execution |
 | `test/*.test.mjs` | Deterministic suites, run by `pnpm test` |
+| `test/*.e2e.mjs` | Scenarios against the real D2 CLI, run by `pnpm test:integration` |
+| `test/fixtures/` | Diagram fixtures, and unsafe source under `security/` |
 | `docs/terminal_diagram_tool_proposal.md` | The design the implementation follows |
 
-The renderer described in the proposal is not built yet. It arrives as the modules listed in
-section 16.1 of that document (source normalization, safe-subset preflight, D2 process runner,
-profiles, diagnostics, render selection, cache, artifact writing), with a real-D2 integration suite
-in `test/*.e2e.mjs` and a `pnpm test:integration` script to run it separately from the deterministic
-suite. The D2 CLI version this project supports is pinned at that point; nothing here spawns `d2`
-today.
+Validation is written as parsing, not checking. Each step turns loose input into a type that
+records what was proven about it: `normalizeSource` produces `NormalizedD2Source`,
+`parseSafeSource` produces `SafeD2Source`, and `D2Cli.renderText` accepts nothing else. Source
+cannot reach the renderer without having been checked, because there is no type for it to arrive
+as. `parseD2Version`, `parseRenderedText`, and `parseBinaryName` work the same way.
+
+Still to build, in the order the proposal sets out: inline images through each host's own
+components, saving `.d2` and `.svg` artifacts, the render cache, and the Mermaid adapter. Profiles
+are accepted today and reported back, but they only start to matter once there is graphical output
+to style.
 
 Pi loads TypeScript through [jiti](https://github.com/unjs/jiti) and Oh My Pi runs it natively, so
 `package.json` points both `pi.extensions` and `omp.extensions` at `src/index.ts` and no build step
@@ -31,6 +43,7 @@ pnpm check             # Everything below, in one gate; also run by CI
 pnpm fix               # Apply safe Biome formatting, import, and lint fixes
 pnpm quality           # Check formatting, imports, and lint rules
 pnpm test              # Build, then run the deterministic suite
+pnpm test:integration  # Build, then run the scenarios against the real D2 CLI
 pnpm deadcode          # Find unused files, exports, and dependencies with Knip
 pnpm package:check     # Build and validate the publishable package with publint
 pnpm security          # Audit dependencies for high-severity advisories
@@ -51,9 +64,29 @@ pi install /absolute/path/to/pi-diagram
 omp plugin link /absolute/path/to/pi-diagram
 ```
 
+The two suites are separated by filename, not by an environment variable, so neither can be
+skipped without the skip being visible in the run. The integration suite asserts structure rather
+than exact drawings: D2's text renderer is beta and its output shifts between releases, so golden
+art would break on every upgrade without telling us anything.
+
+## The D2 dependency
+
+The supported floor is D2 0.8.0. 0.7.x accepts the same flags but draws `shape: sql_table` as an
+empty box, losing every column, and database diagrams are a core use case.
+
+The prebuilt GitHub release binaries stop at v0.7.1, so they are below the floor. Install with
+`brew install d2`, which ships 0.8.1, or from the pinned module version:
+
+```bash
+go install github.com/d2lang/d2@v0.8.1
+```
+
+The module path changed at 0.8: it is `github.com/d2lang/d2`, not `oss.terrastruct.com/d2`.
+
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs the full `pnpm check` gate on every push and pull request.
+`.github/workflows/ci.yml` runs the full `pnpm check` gate on every push and pull request, with
+D2 installed from the pinned module version. The Go checksum database verifies what is fetched.
 
 ## Release
 

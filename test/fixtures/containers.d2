@@ -1,0 +1,18 @@
+edge: Edge {
+  cdn
+  gateway
+}
+core: Core Services {
+  api
+  worker
+}
+data: Data {
+  postgres
+  redis
+}
+edge.cdn -> edge.gateway
+edge.gateway -> core.api
+core.api -> data.redis: cache
+core.api -> data.postgres: read
+core.api -> core.worker: enqueue
+core.worker -> data.postgres: write

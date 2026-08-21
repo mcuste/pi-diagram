@@ -26,6 +26,12 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+          cache: false
+      - name: Install pinned D2 CLI
+        run: go install github.com/d2lang/d2@v0.8.1
       - run: pnpm install --frozen-lockfile
       - name: Verify the tag matches the package version
         run: |

@@ -14,9 +14,10 @@ If any of those names are new to you:
 - **Pi** and **Oh My Pi** are terminal coding agents. An **extension** is an npm package they load
   at startup to add tools the model can call.
 
-> **Status: scaffold.** The tool contract, project tooling, and release pipeline are in place. The
-> renderer is not built yet, so a tool call reports that instead of drawing a diagram. The design it
-> follows is [docs/terminal_diagram_tool_proposal.md](docs/terminal_diagram_tool_proposal.md).
+> **Status: text output works.** Diagrams render in the transcript as box drawing or plain ASCII.
+> Inline images and saving `.d2` and `.svg` files are not built yet, and a call that asks for them
+> is told so. The design being followed is
+> [docs/terminal_diagram_tool_proposal.md](docs/terminal_diagram_tool_proposal.md).
 
 ## Why
 
@@ -33,10 +34,18 @@ across calls, because the model is not styling them one at a time.
 ## Requirements
 
 - Node.js 22 or newer
-- The [D2 CLI](https://d2lang.com/tour/install) on `PATH`, or a configured path to it
+- The D2 CLI, version 0.8.0 or newer, on `PATH` or named by `D2_BIN`
 
-The D2 CLI is an explicit external dependency. The extension never downloads a renderer during a
-tool call.
+```bash
+brew install d2                          # ships 0.8.1
+go install github.com/d2lang/d2@v0.8.1   # or a pinned build from source
+```
+
+The prebuilt binaries on D2's GitHub releases page stop at 0.7.1, which draws SQL tables as empty
+boxes, so they are below the supported floor.
+
+D2 is an external dependency on purpose. The extension never downloads a renderer during a tool
+call. Without it, the extension still loads and a call explains how to install it.
 
 ## Install
 
@@ -69,22 +78,53 @@ omp plugin link /absolute/path/to/pi-diagram
 
 ## What the tool does
 
-One tool named `diagram`, taking diagram source plus a few semantic hints:
+One tool named `diagram`. Give it D2 source and it draws the diagram in the terminal:
+
+```d2
+edge: Edge { gateway }
+core: Core { api; worker }
+edge.gateway -> core.api
+core.api -> core.worker: enqueue
+```
+
+```text
+┌───────────────────┐
+│       Edge        │
+│                   │
+│    ┌──────────┐   │
+│    │ gateway  │   │
+│    └──────────┘   │
+│          │        │
+└──────────│────────┘
+           │
+ ┌─────────│─────────┐
+ │       Core        │
+ │         ▼         │
+ │     ┌──────┐      │
+ │     │ api  │      │
+ │     └──────┘      │
+ │         │         │
+ │      enqueue      │
+ │         ▼         │
+ │    ┌─────────┐    │
+ │    │ worker  │    │
+ │    └─────────┘    │
+ └───────────────────┘
+```
+
+Containers, sequence diagrams, SQL tables, class shapes, and state flows all work from the same
+language.
 
 | Field | Purpose |
 | --- | --- |
-| `source` | The diagram, in the language named by `language` |
-| `language` | `d2` (default) or `mermaid` for existing content |
-| `title` | Label shown with the diagram and used to name saved files |
-| `profile` | `explain`, `architecture`, `data`, or `docs`: what the diagram is for |
-| `render` | `auto`, `image`, `unicode`, `ascii`, or `source` |
-| `save` | Directory, file name stem, and formats to write into the workspace |
+| `source` | The diagram, in D2 |
+| `title` | Label shown above the diagram |
+| `render` | `auto` and `unicode` draw box drawing, `ascii` plain 7-bit, `source` echoes the D2 |
+| `language` | `d2`. `mermaid` is in the schema but has no adapter yet |
+| `profile` | Accepted and reported back; it starts to matter once there is graphical output |
+| `save` | Not built yet; a call using it is told so |
 
-`render: auto` shows an inline image where the terminal supports one and Unicode box drawing where
-it does not. A call without `save` is a diagram shown only in chat; a call with it also writes
-editable source and an SVG, so the diagram survives as documentation.
-
-Layout engine, theme, padding, and font are deliberately not in the schema. They are harness policy,
+Layout engine, theme, padding, and font are deliberately not in the schema. They are policy here,
 and a model given those knobs spends tokens on styling and produces a different look every call.
 
 ## What is deliberately missing
@@ -99,6 +139,7 @@ and a model given those knobs spends tokens on styling and produces a different 
 
 ## Documentation
 
+- [Safety model](docs/safety.md)
 - [Design proposal](docs/terminal_diagram_tool_proposal.md)
 - [Development and release](docs/development.md)
 - [Changelog](CHANGELOG.md)
