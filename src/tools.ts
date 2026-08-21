@@ -1,8 +1,11 @@
 import { type Static, type TSchema, Type } from "typebox";
+import { DiagramSourceError } from "./d2/diagnostics.js";
+import { D2Cli, type D2Renderer } from "./d2/runner.js";
+import { type DiagramRendering, type Representation, renderDiagram } from "./render.js";
 
 /**
- * Source is capped well below what D2 can parse: a diagram that reads clearly in a terminal is
- * a few dozen lines, and a larger one is usually a sign the model is dumping a whole codebase.
+ * Capped well below what D2 can parse: a diagram that reads clearly in a terminal is a few dozen
+ * lines, and a larger one usually means the model is dumping a whole codebase.
  */
 const MAX_SOURCE_LENGTH = 20_000;
 const MAX_TITLE_LENGTH = 120;
@@ -103,29 +106,37 @@ const DiagramParameters = Type.Object(
 
 type DiagramParameters = Static<typeof DiagramParameters>;
 
+const DIAGRAM_DESCRIPTION = [
+  "Draw a diagram from D2 source and show it in the terminal. Use it when architecture,",
+  "relationships, sequence, data flow, state transitions, schemas, or process flow are easier to",
+  "see than to read, and keep the diagram to what answers the question.",
+  "",
+  "D2 in brief:",
+  "  edges       client -> gateway: request",
+  "  containers  core: Core Services { api; worker }, then core.api -> core.worker",
+  "  sequence    flow: { shape: sequence_diagram; user -> api: submit }",
+  "  tables      users: { shape: sql_table; id: int {constraint: primary_key}; email: varchar }",
+  "",
+  "Not allowed: `@` imports, `icon`, `link`, `shape: image`, and `|...|` block labels.",
+  "Do not set colours, themes, or fonts. This tool owns how diagrams look.",
+  "Aim for 5 to 15 nodes; split anything larger into several diagrams.",
+].join("\n");
+
 /**
- * What the harness needs to draw the result and what an expanded view shows. Kept out of the
- * content sent to the model so a base64 image or a full text diagram never re-enters its context.
+ * The diagram itself travels in `content` rather than here, because both hosts display that
+ * without a custom renderer. It moves once the adapters own the display.
  */
 interface DiagramToolDetails {
-  readonly language: Static<typeof DiagramLanguage>;
+  readonly language: "d2";
   readonly title?: string;
-  readonly renderedAs: Exclude<Static<typeof DiagramRender>, "auto">;
+  readonly profile: Static<typeof DiagramProfile>;
+  readonly requested: Static<typeof DiagramRender>;
+  readonly renderedAs: Representation;
   readonly sourceHash: string;
-  readonly diagnostics?: readonly {
-    readonly line?: number;
-    readonly column?: number;
-    readonly message: string;
-  }[];
-  readonly outputs: {
-    readonly svgPath?: string;
-    readonly pngPath?: string;
-    readonly textPath?: string;
-    readonly sourcePath?: string;
-  };
-  readonly textPreview?: string;
-  readonly widthCells?: number;
-  readonly heightCells?: number;
+  readonly lineCount: number;
+  readonly widthCells: number;
+  readonly d2Version?: string;
+  readonly notes?: readonly string[];
 }
 
 interface TextContent {
@@ -183,44 +194,112 @@ export interface DiagramExtensionApi {
   ): void;
 }
 
-/** Thrown while the renderer is unbuilt. */
-export class DiagramRendererUnavailableError extends Error {
-  constructor() {
-    super(
-      "Diagram rendering is not implemented yet. This package currently only declares the tool contract.",
-    );
-    this.name = "DiagramRendererUnavailableError";
-  }
+export interface DiagramExtensionDependencies {
+  readonly renderer?: D2Renderer;
 }
 
-/** Persisting artifacts writes into the workspace; a diagram shown only in chat does not. */
 function approvalFor(args: unknown): ToolApprovalDecision {
-  const save = (args as Partial<DiagramParameters> | undefined)?.save;
-  return save ? "write" : "read";
+  return readSave(args) ? "write" : "read";
 }
 
 function approvalDetails(args: unknown): readonly string[] | undefined {
-  const save = (args as Partial<DiagramParameters> | undefined)?.save;
+  const save = readSave(args);
   if (!save) {
     return undefined;
   }
   return [`Writes diagram artifacts to ${save.dir ?? "the default artifact directory"}.`];
 }
 
-export function registerDiagramTools(pi: DiagramExtensionApi): void {
+function readSave(args: unknown): DiagramParameters["save"] | undefined {
+  if (typeof args !== "object" || args === null) {
+    return undefined;
+  }
+  const save = Reflect.get(args, "save");
+  return typeof save === "object" && save !== null
+    ? (save as DiagramParameters["save"])
+    : undefined;
+}
+
+/** Refuses what the schema accepts but this build cannot honour, rather than ignoring it. */
+function assertSupported(parameters: DiagramParameters): void {
+  if (parameters.language !== undefined && parameters.language !== "d2") {
+    throw new DiagramSourceError("Mermaid input is not enabled in this version.", [
+      {
+        code: "D2_SOURCE",
+        message: `language ${JSON.stringify(parameters.language)} has no adapter yet.`,
+        hint: "Send D2 source instead.",
+      },
+    ]);
+  }
+  if (parameters.save !== undefined) {
+    throw new DiagramSourceError("Saving diagram artifacts is not built yet.", [
+      {
+        code: "D2_SOURCE",
+        message: "This version only shows diagrams in the transcript.",
+        hint: "Call again without `save`.",
+      },
+    ]);
+  }
+}
+
+function contentFor(rendering: DiagramRendering): string {
+  const blocks = [
+    rendering.title,
+    rendering.text,
+    ...rendering.notes.map((note) => `note: ${note}`),
+  ];
+  return blocks.filter((block): block is string => Boolean(block)).join("\n\n");
+}
+
+function detailsFor(
+  parameters: DiagramParameters,
+  rendering: DiagramRendering,
+): DiagramToolDetails {
+  return {
+    language: "d2",
+    ...(rendering.title === undefined ? {} : { title: rendering.title }),
+    profile: parameters.profile ?? "explain",
+    requested: parameters.render ?? "auto",
+    renderedAs: rendering.renderedAs,
+    sourceHash: rendering.sourceHash,
+    lineCount: rendering.lineCount,
+    widthCells: rendering.widthCells,
+    ...(rendering.d2Version === undefined ? {} : { d2Version: rendering.d2Version }),
+    ...(rendering.notes.length === 0 ? {} : { notes: rendering.notes }),
+  };
+}
+
+export function registerDiagramTools(
+  pi: DiagramExtensionApi,
+  dependencies: DiagramExtensionDependencies = {},
+): void {
+  const renderer = dependencies.renderer ?? new D2Cli();
+
   pi.registerTool<typeof DiagramParameters, DiagramToolDetails>({
     name: "diagram",
     label: "Diagram",
-    description:
-      "Create and render a diagram from declarative source. Prefer D2. Use this tool when architecture, relationships, sequence, data flow, state transitions, schemas, or process flow are easier to understand visually than as prose. Keep diagrams focused on the user's question; omit incidental implementation detail. Do not spend tokens on cosmetic styling unless it communicates meaning. The harness applies a consistent visual profile automatically.",
+    description: DIAGRAM_DESCRIPTION,
     parameters: DiagramParameters,
     approval: approvalFor,
     formatApprovalDetails: approvalDetails,
     loadMode: "discoverable",
     concurrency: "shared",
     executionMode: "parallel",
-    execute() {
-      return Promise.reject(new DiagramRendererUnavailableError());
+    async execute(_toolCallId, parameters, signal) {
+      assertSupported(parameters);
+      const rendering = await renderDiagram(
+        {
+          source: parameters.source,
+          title: parameters.title,
+          render: parameters.render,
+          signal,
+        },
+        renderer,
+      );
+      return {
+        content: [{ type: "text", text: contentFor(rendering) }],
+        details: detailsFor(parameters, rendering),
+      };
     },
   });
 }

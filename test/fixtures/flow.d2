@@ -1,0 +1,6 @@
+client -> gateway: request
+gateway -> api: forward
+api -> cache: lookup
+api -> database: query
+database -> api: rows
+api -> gateway: response

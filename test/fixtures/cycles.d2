@@ -1,0 +1,6 @@
+idle -> running: start
+running -> paused: pause
+paused -> running: resume
+running -> idle: stop
+running -> failed: error
+failed -> idle: reset

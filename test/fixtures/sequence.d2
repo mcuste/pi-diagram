@@ -1,0 +1,7 @@
+shape: sequence_diagram
+user -> web: submit form
+web -> api: POST /orders
+api -> db: insert order
+db -> api: order id
+api -> web: 201 Created
+web -> user: confirmation

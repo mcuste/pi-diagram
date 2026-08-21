@@ -28,5 +28,15 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+          cache: false
+      # The integration suite needs the real CLI. A pinned module version keeps render output
+      # stable, and the Go checksum database verifies the fetch. See src/d2/runner.ts for the
+      # version floor.
+      - name: Install pinned D2 CLI
+        run: go install github.com/d2lang/d2@v0.8.1
+      - run: d2 --version
       - run: pnpm install --frozen-lockfile
       - run: pnpm check

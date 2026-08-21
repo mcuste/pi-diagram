@@ -1,0 +1,10 @@
+Repository: {
+  shape: class
+  find(id): Order
+  save(order): void
+}
+OrderService: {
+  shape: class
+  place(request): Order
+}
+OrderService -> Repository: uses
