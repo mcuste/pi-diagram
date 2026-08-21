@@ -3,8 +3,9 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 /**
- * Turns a diagram result into terminal components, choosing between the image and the text. The
- * image is read from the temp store at display time, which keeps encoded bytes out of the session.
+ * Turns a diagram result into terminal components. Both the image and the text are drawn here
+ * rather than by the host, so neither has to travel back through the model's context. The image is
+ * read from the temp store at display time.
  */
 
 /** Wide enough for an architecture diagram, short enough to leave the transcript readable. */
@@ -84,9 +85,14 @@ export function imagesSupported(): boolean | undefined {
   return tui === undefined ? undefined : tui.getCapabilities().images !== null;
 }
 
-/** Throws when there is no image to show, which the host takes as a request to render text. */
-export function renderDiagramImage(
-  image: DiagramImageInput,
+/** Whether this package can draw a result row at all, or the host has to print the text. */
+export function displayLoaded(): boolean {
+  return tui !== undefined;
+}
+
+/** Throws only when the library is missing, which the host takes as a request to render text. */
+export function renderDiagramResult(
+  view: DiagramView,
   theme: DisplayTheme,
   context: DisplayContext,
 ): Component {
@@ -95,45 +101,62 @@ export function renderDiagramImage(
     primeDisplay();
     throw new Error("The TUI library is not loaded.");
   }
-  if (!context.showImages) {
-    throw new Error("Inline images are turned off.");
-  }
-  // The image component would otherwise draw a line naming the file, not the diagram.
-  if (module.getCapabilities().images === null) {
-    throw new Error("This terminal has no image protocol.");
-  }
 
-  const encoded = read(image.image, context);
   const container = new module.Container();
-  if (image.title !== undefined) {
-    container.addChild(new module.Text(theme.fg("toolOutput", image.title), 0, 0));
+  const line = (text: string): void => {
+    container.addChild(new module.Text(theme.fg("toolOutput", text), 0, 0));
+  };
+  if (view.title !== undefined) {
+    line(view.title);
   }
-  container.addChild(
-    new module.Image(
-      encoded,
-      "image/png",
-      { fallbackColor: (text: string) => theme.fg("toolOutput", text) },
-      {
-        maxWidthCells: MAX_WIDTH_CELLS,
-        maxHeightCells: MAX_HEIGHT_CELLS,
-        filename: image.image.path,
-      },
-      { widthPx: image.image.widthPx, heightPx: image.image.heightPx },
-    ),
-  );
 
-  const footer = [...(context.expanded ? image.paths : []), ...image.notes];
+  const image = drawable(module, view.image, context) ? view.image : undefined;
+  if (image === undefined) {
+    line(view.text);
+  } else {
+    try {
+      container.addChild(
+        new module.Image(
+          read(image, context),
+          "image/png",
+          { fallbackColor: (text: string) => theme.fg("toolOutput", text) },
+          {
+            maxWidthCells: MAX_WIDTH_CELLS,
+            maxHeightCells: MAX_HEIGHT_CELLS,
+            filename: image.path,
+          },
+          { widthPx: image.widthPx, heightPx: image.heightPx },
+        ),
+      );
+    } catch {
+      // The picture is gone from the temp store, so show the text instead.
+      line(view.text);
+    }
+  }
+
+  const footer = [...view.notes, ...(context.expanded ? view.details : [])];
   if (footer.length > 0) {
-    container.addChild(new module.Text(theme.fg("toolOutput", footer.join("\n")), 0, 0));
+    line(footer.join("\n"));
   }
   return container;
 }
 
-export interface DiagramImageInput {
-  readonly image: DisplayImage;
+function drawable(
+  module: TuiModule,
+  image: DisplayImage | undefined,
+  context: DisplayContext,
+): boolean {
+  return image !== undefined && context.showImages && module.getCapabilities().images !== null;
+}
+
+export interface DiagramView {
+  readonly image: DisplayImage | undefined;
   readonly title: string | undefined;
-  readonly paths: readonly string[];
+  /** Drawn when there is no image, or when the one there is cannot be shown. */
+  readonly text: string;
   readonly notes: readonly string[];
+  /** Render mode, paths, diagnostics, and source. Shown only in the expanded row. */
+  readonly details: readonly string[];
 }
 
 /** Reads the image once per result row: the host calls the renderer again on every redraw. */

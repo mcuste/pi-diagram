@@ -5,7 +5,7 @@ import {
   type WrittenArtifact,
   writeArtifacts,
 } from "./artifacts.js";
-import { DiagramSourceError } from "./d2/diagnostics.js";
+import { type Diagnostic, DiagramSourceError } from "./d2/diagnostics.js";
 import { parseSafeSource, type SafeD2Source } from "./d2/preflight.js";
 import { type ProfileName, parseProfile } from "./d2/profiles.js";
 import {
@@ -59,6 +59,10 @@ export interface DiagramRendering {
   readonly profile: ProfileName;
   readonly renderedAs: Representation;
   readonly text: string;
+  /** The D2 source that was drawn, for the expanded view. */
+  readonly source: string;
+  /** Why the text came out the way it did. Empty when nothing went wrong. */
+  readonly diagnostics: readonly Diagnostic[];
   readonly image: DiagramImage | undefined;
   readonly title: SafeTitle | undefined;
   readonly sourceHash: string;
@@ -191,6 +195,8 @@ export async function renderDiagram(
       ...measure(source, MAX_COLUMNS),
       renderedAs: "source",
       text: source,
+      source,
+      diagnostics: textFailure.diagnostics,
       image,
       d2Version: svg?.version,
       saved,
@@ -208,6 +214,8 @@ export async function renderDiagram(
     ...measure(showSource ? source : (text as string), MAX_COLUMNS),
     renderedAs: showSource ? "source" : mode === "standard" ? "ascii" : "unicode",
     text: showSource ? source : (text as string),
+    source,
+    diagnostics: [],
     image,
     d2Version:
       drawn instanceof TextRenderUnavailableError ? svg?.version : (drawn?.version ?? svg?.version),

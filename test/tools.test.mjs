@@ -136,7 +136,7 @@ test("the diagram alone is returned when there is no title", async () => {
   assert.equal(result.content[0].text, UNICODE_DIAGRAM);
 });
 
-test("details describe the render without repeating the diagram", async () => {
+test("details describe the render and carry the diagram for the renderer", async () => {
   const result = await run(register(createRenderer()), {
     source: "a -> b",
     title: "Request path",
@@ -151,11 +151,12 @@ test("details describe the render without repeating the diagram", async () => {
     profile: "architecture",
     requested: "auto",
     renderedAs: "unicode",
+    textPreview: UNICODE_DIAGRAM,
+    source: "a -> b",
     lineCount: 3,
     widthCells: 6,
     d2Version: "v0.8.1-HEAD",
   });
-  assert.ok(!JSON.stringify(result.details).includes("\u250c"), "details repeat the diagram");
 });
 
 test("a fallback to plain ASCII is reported to the user and recorded in details", async () => {
@@ -222,6 +223,8 @@ function registerWithImages() {
 const theme = { fg: (_color, text) => text };
 
 test("an image is produced only in a terminal, since nothing else can show one", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
   const tool = registerWithImages();
   for (const [mode, expected] of [
     ["tui", "image"],
@@ -238,7 +241,9 @@ test("an image is produced only in a terminal, since nothing else can show one",
   }
 });
 
-test("the image never travels in the content the model reads", async () => {
+test("neither the image nor the diagram travels in the content the model reads", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
   const tool = registerWithImages();
   const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
     cwd: process.cwd(),
@@ -248,20 +253,60 @@ test("the image never travels in the content the model reads", async () => {
     result.content.map((block) => block.type),
     ["text"],
   );
-  assert.equal(result.content[0].text.includes(PNG_BYTES.toString("base64")), false);
-  assert.match(result.content[0].text, /┌/);
+  const text = result.content[0].text;
+  assert.equal(text.includes(PNG_BYTES.toString("base64")), false);
+  assert.doesNotMatch(text, /┌/);
+  assert.match(text, /^Drew the diagram as (an image|box drawing)\./);
+  assert.match(text, /not repeated here/);
 });
 
-test("the host renders its own text when there is no image to show", () => {
+test("the diagram is in the content when the host has to print it", async () => {
   const tool = registerWithImages();
-  const context = { showImages: true, state: {} };
-  assert.throws(
-    () => tool.renderResult({ content: [], details: {} }, { expanded: false }, theme, context),
-    /no image/,
-  );
+  for (const mode of ["print", "rpc", undefined]) {
+    const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
+      cwd: process.cwd(),
+      mode,
+    });
+    assert.match(result.content[0].text, /┌/, String(mode));
+  }
 });
 
-test("an image is shown as a component, and only when images are turned on", async () => {
+test("a diagram with no image is drawn here as text", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const tool = register(createRenderer());
+  const result = await run(tool, { source: "a -> b", title: "Request path" });
+  const component = tool.renderResult(result, { expanded: false }, theme, {
+    showImages: true,
+    state: {},
+  });
+  const drawn = component.render(120).join("\n");
+  assert.match(drawn, /Request path/);
+  assert.match(drawn, /┌/);
+});
+
+test("the expanded row adds the render mode, the paths, and the source", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const tool = register(createRenderer());
+  const result = await run(tool, { source: "a -> b" });
+  const context = { showImages: true, state: {} };
+
+  const collapsed = tool
+    .renderResult(result, { expanded: false }, theme, context)
+    .render(120)
+    .join("\n");
+  assert.doesNotMatch(collapsed, /a -> b/);
+
+  const expanded = tool
+    .renderResult(result, { expanded: true }, theme, context)
+    .render(120)
+    .join("\n");
+  assert.match(expanded, /Drawn as box drawing, profile explain, D2 v0\.8\.1-HEAD/);
+  assert.match(expanded, /a -> b/);
+});
+
+test("an image is shown as a component, and the text takes over when images are off", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
   const tool = registerWithImages();
@@ -277,10 +322,11 @@ test("an image is shown as a component, and only when images are turned on", asy
   assert.equal(typeof component.render, "function");
   assert.ok(component.render(120).length > 0);
 
-  assert.throws(
-    () => tool.renderResult(result, { expanded: false }, theme, { showImages: false, state: {} }),
-    /images are turned off/,
-  );
+  const off = tool
+    .renderResult(result, { expanded: false }, theme, { showImages: false, state: {} })
+    .render(120)
+    .join("\n");
+  assert.match(off, /┌/);
 });
 
 test("the image is read once per result row", async () => {
@@ -324,10 +370,12 @@ test("a terminal with no image protocol gets the text, not a filename", async ()
   });
 
   await withCapabilities(null, () => {
-    assert.throws(
-      () => tool.renderResult(result, { expanded: false }, theme, { showImages: true, state: {} }),
-      /no image protocol/,
-    );
+    const drawn = tool
+      .renderResult(result, { expanded: false }, theme, { showImages: true, state: {} })
+      .render(120)
+      .join("\n");
+    assert.match(drawn, /┌/);
+    assert.doesNotMatch(drawn, /\.png/);
   });
   // The same result still draws where the terminal can show one.
   await withCapabilities("kitty", () => {

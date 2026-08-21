@@ -107,6 +107,14 @@ test("source mode returns the normalized source without running D2", async () =>
   assert.deepEqual(renderer.calls, []);
 });
 
+test("the source that was drawn comes back for the expanded row", async () => {
+  const renderer = createRenderer();
+  const rendering = await renderDiagram({ source: " a -> b \r\n" }, renderer);
+  assert.equal(rendering.source, "a -> b");
+  assert.notEqual(rendering.text, rendering.source);
+  assert.deepEqual(rendering.diagnostics, []);
+});
+
 test("ascii mode asks for standard characters", async () => {
   const renderer = createRenderer();
   const rendering = await renderDiagram({ source: "a -> b", render: "ascii" }, renderer);
@@ -226,10 +234,10 @@ test("an SVG is only rendered when it is going to be written", async () => {
 test("a text failure still saves the SVG and shows the source instead", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-diagram-render-"));
   try {
-    const renderer = createRenderer({
-      extended: new TextRenderUnavailableError("beta renderer"),
-      standard: new TextRenderUnavailableError("beta renderer"),
-    });
+    const failure = new TextRenderUnavailableError("beta renderer", [
+      { code: "D2_RENDER", message: "cannot draw this shape as text", line: 2 },
+    ]);
+    const renderer = createRenderer({ extended: failure, standard: failure });
     const rendering = await renderDiagram(
       {
         source: "a -> b",
@@ -249,6 +257,8 @@ test("a text failure still saves the SVG and shows the source instead", async ()
     );
     assert.ok(rendering.notes.some((note) => note.includes("No .txt was written")));
     assert.ok(rendering.notes.some((note) => note.includes("shown as source")));
+    // Why the text is missing, for the expanded row.
+    assert.deepEqual(rendering.diagnostics, failure.diagnostics);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
