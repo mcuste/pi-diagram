@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { type Static, type TSchema, Type } from "typebox";
 import {
   parseRenderPreference,
@@ -39,6 +40,22 @@ const MAX_PATH_LENGTH = 255;
 const DEFAULT_RENDER_PREFERENCE: RenderPreference = "unicode";
 const IMAGE_UNAVAILABLE_WARNING = "Image support is unavailable; generated as Unicode.";
 const RENDER_FLAG = "diagram-render";
+
+let diagramDescription: string | undefined;
+let diagramDescriptionLoading: Promise<void> | undefined;
+
+export function primeDiagramDescription(): Promise<void> {
+  diagramDescriptionLoading ??= readFile(
+    new URL("./tool-description.md", import.meta.url),
+    "utf8",
+  ).then((source) => {
+    diagramDescription = source.trimEnd();
+    if (diagramDescription === "") {
+      throw new Error("Diagram tool description is empty.");
+    }
+  });
+  return diagramDescriptionLoading;
+}
 
 export interface DiagramPreferenceApi {
   registerFlag(
@@ -158,36 +175,6 @@ const DiagramParameters = Type.Object(
 );
 
 type DiagramParameters = Static<typeof DiagramParameters>;
-
-const DIAGRAM_DESCRIPTION = [
-  "Draw a diagram from D2 source and show it in the terminal. Use it when architecture,",
-  "relationships, sequence, data flow, state transitions, schemas, or process flow are easier to",
-  "see than to read, and keep the diagram to what answers the question.",
-  "",
-  "D2 in brief:",
-  "  edges       client -> gateway: request",
-  "  containers  core: Core Services { api; worker }, then core.api -> core.worker",
-  "  sequence    flow: { shape: sequence_diagram; user -> api: submit }",
-  "  tables      users: { shape: sql_table; id: int {constraint: primary_key}; email: varchar }",
-  "",
-  "Not allowed: `@` imports, `icon`, `link`, `shape: image`, and `|...|` block labels.",
-  "Do not set colours, themes, or fonts. This tool owns how diagrams look.",
-  "Aim for 5 to 15 nodes, or up to about 25 with `profile: dependency`. Split anything larger.",
-  "",
-  "`profile` says what the diagram is for, and sets the layout, theme, and spacing:",
-  "  explain      an answer in this conversation, drawn by hand. The default",
-  "  architecture systems and components, with room between the parts",
-  "  data         schemas, tables, class relationships",
-  "  docs         a diagram that will be checked into the repository",
-  "  tree         a hierarchy: an org chart, a call tree, a file layout",
-  "  c4           the C4 convention, with the palette its readers expect",
-  "  dependency   a graph with more nodes than usual, drawn dense",
-  "",
-  "Files: `formats` produces .d2, .svg, .png, or .txt outside the repository and returns the",
-  "paths. `save: { dir }` also copies them into the repository, so Markdown can reference the",
-  "SVG. Only pass `save` when the user asked to keep the diagram; explaining something needs",
-  "neither. `auto` uses the user's render preference, which defaults to Unicode.",
-].join("\n");
 
 /**
  * `content` goes to the model and `details` only to the screen, so the diagram travels in
@@ -478,6 +465,10 @@ export function registerDiagramTools(
   pi: DiagramExtensionApi,
   dependencies: DiagramExtensionDependencies = {},
 ): void {
+  const description = diagramDescription;
+  if (description === undefined) {
+    throw new Error("Diagram tool description has not loaded.");
+  }
   const renderer = dependencies.renderer ?? new D2Cli();
   const rasterizer = dependencies.rasterizer ?? new ResvgRasterizer();
   const renderPreference = dependencies.renderPreference ?? (() => DEFAULT_RENDER_PREFERENCE);
@@ -486,7 +477,7 @@ export function registerDiagramTools(
   pi.registerTool<typeof DiagramParameters, DiagramToolDetails>({
     name: "diagram",
     label: "Diagram",
-    description: DIAGRAM_DESCRIPTION,
+    description,
     parameters: DiagramParameters,
     approval: approvalFor,
     formatApprovalDetails: approvalDetails,

@@ -56,12 +56,13 @@ test("nothing is added when the diagram tool is not active", () => {
   assert.ok(withGuidance({ systemPrompt: PI_PROMPT, systemPromptOptions: active }));
 });
 
-test("the guidance says when to draw and which diagram fits", () => {
+test("the guidance says when to draw and points to the tool selection rules", () => {
   assert.match(DIAGRAM_GUIDANCE, /^Diagrams:\n/);
-  // Every profile has to be reachable from the guidance, or a profile is never chosen.
-  for (const profile of ["explain", "architecture", "data", "docs", "tree", "c4", "dependency"]) {
-    assert.match(DIAGRAM_GUIDANCE, new RegExp(`profile ${profile}\\b`), profile);
+  for (const view of ["C4", "sequence", "class", "data", "dependency", "tree"]) {
+    assert.match(DIAGRAM_GUIDANCE, new RegExp(`\\b${view}\\b`), view);
   }
+  assert.match(DIAGRAM_GUIDANCE, /tool description/u);
+  assert.doesNotMatch(DIAGRAM_GUIDANCE, /\b(?:profile|shape) [a-z_]+/u);
   const bullets = DIAGRAM_GUIDANCE.split("\n").filter((line) => line.trim().startsWith("- "));
   assert.ok(bullets.length > 8);
 });

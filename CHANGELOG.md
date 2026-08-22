@@ -10,6 +10,11 @@ All notable changes to this project are documented in this file. The format foll
 
 - `Ctrl+O` now toggles inline diagrams between a compact preview and a terminal-width zoom view.
 
+### Changed
+
+- Diagram type selection now follows what the reader needs to understand. The injected guidance
+  and tool description are editable Markdown files.
+
 ### Fixed
 
 - Render configuration now applies when added during a running session. A Bun-based Pi executable

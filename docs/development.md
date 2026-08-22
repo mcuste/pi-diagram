@@ -5,7 +5,8 @@
 | Path | Contents |
 | --- | --- |
 | `src/index.ts` | Extension entry point; both hosts load it directly |
-| `src/tools.ts` | The `diagram` tool: schema, approval tier, and result shape |
+| `src/tools.ts` | The `diagram` tool: schema, approval tier, result shape, and cached description |
+| `src/tool-description.md` | The editable description shown to the model with the tool |
 | `src/guidance.md` | The editable prompt injected before an agent starts |
 | `src/guidance.ts` | Loading the cached prompt and appending it to the host prompt |
 | `src/render.ts` | Representation choice, Unicode fallback, and transcript limits |
@@ -106,12 +107,16 @@ Pi loads TypeScript through [jiti](https://github.com/unjs/jiti) and Oh My Pi ru
 is needed to install from npm, git, or a local path. The `dist/` build exists as a type check and
 for anyone importing the package directly.
 
-The prompt lives in `src/guidance.md`. `registerDiagramGuidance` reads it once and caches it before
-installing the `before_agent_start` hook. The build copies it to `dist/guidance.md` for direct
-package imports. Pi hands the prompt over as one string and Oh My Pi as ordered blocks, so both
-shapes are handled, and the hook replaces what it returns: a prompt that cannot be read is left
-alone rather than being reduced to the block. The block is left out when the host reports that the
-`diagram` tool is not active, and a prompt that already carries it is not given a second copy.
+The tool description lives in `src/tool-description.md`. `primeDiagramDescription` reads it once
+before the tool is registered. It owns D2 syntax, limits, and profile and shape selection. The
+injected prompt lives in `src/guidance.md` and owns when to draw and how to shape the response.
+`registerDiagramGuidance` reads it once before installing the `before_agent_start` hook. The build
+copies both files into `dist` for direct package imports.
+
+Pi hands the prompt over as one string and Oh My Pi as ordered blocks, so both shapes are handled,
+and the hook replaces what it returns. A prompt that cannot be read is left alone rather than being
+reduced to the block. The block is left out when the host reports that the `diagram` tool is not
+active, and a prompt that already carries it is not given a second copy.
 
 `typebox` is a peer dependency. Both hosts bundle it, and a second copy would hand the host a schema
 it does not recognise.

@@ -3,8 +3,7 @@ import { readFile } from "node:fs/promises";
 let guidance: string | undefined;
 let guidanceLoading: Promise<void> | undefined;
 
-/** Reads the editable prompt once before the host can invoke the hook. */
-export function primeDiagramGuidance(): Promise<void> {
+function primeDiagramGuidance(): Promise<void> {
   guidanceLoading ??= readFile(new URL("./guidance.md", import.meta.url), "utf8").then((source) => {
     guidance = source.trimEnd();
     if (guidance === "") {

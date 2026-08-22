@@ -10,12 +10,18 @@ import { PROFILE_NAMES } from "../dist/d2/profiles.js";
 import { TextRenderUnavailableError } from "../dist/d2/runner.js";
 import {
   parseRenderPreference,
+  primeDiagramDescription,
   registerDiagramPreference,
   registerDiagramTools,
 } from "../dist/tools.js";
 import { png } from "./fixtures/png.mjs";
 
 const UNICODE_DIAGRAM = "┌────┐\n│ a  │\n└────┘";
+const TOOL_DESCRIPTION = (
+  await readFile(new URL("../src/tool-description.md", import.meta.url), "utf8")
+).trimEnd();
+
+await primeDiagramDescription();
 
 function register(renderer, renderPreference) {
   const tools = new Map();
@@ -150,8 +156,28 @@ test("a diagram kept out of the repository prompts for nothing", () => {
   assert.equal(diagram.formatApprovalDetails({ source: "a -> b", formats: ["svg"] }), undefined);
 });
 
-test("the description shows the model the D2 syntax it needs", () => {
-  for (const example of ["client -> gateway", "sequence_diagram", "sql_table", "shape: image"]) {
+test("the tool description is loaded from Markdown", () => {
+  assert.equal(diagram.description, TOOL_DESCRIPTION);
+});
+
+test("profile selection appears before D2 syntax", () => {
+  assert.ok(diagram.description.indexOf("## Selection") < diagram.description.indexOf("## Syntax"));
+});
+
+test("the description shows the model the syntax and selection rules it needs", () => {
+  for (const profile of PROFILE_NAMES) {
+    assert.match(diagram.description, new RegExp(`- \`${profile}\`:`), profile);
+  }
+  for (const example of [
+    "client -> gateway",
+    "sequence_diagram",
+    "shape: class",
+    "sql_table",
+    "c4-person",
+    "callbacks",
+    "affected code",
+    "shape: image",
+  ]) {
     assert.ok(diagram.description.includes(example), example);
   }
 });

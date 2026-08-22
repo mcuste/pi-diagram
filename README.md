@@ -128,9 +128,9 @@ language.
 A described tool gets called when the user asks for a diagram, not when a diagram is the clearer
 answer. So the extension adds a short block to the host system prompt: draw when structure, flow,
 or relationships are easier to see than to read, call the tool before explaining, keep the prose
-to what the picture does not show, and never hand-write ASCII art or a Mermaid block. The block
-also maps a question to a diagram, so components go to `architecture`, message order to a sequence
-diagram, tables to `data`, a hierarchy to `tree`, and so on.
+to what the picture does not show, and never hand-write ASCII art or Mermaid. The block tells the
+model to check C4, sequence, class, data, dependency, or tree before drawing a generic flow. The
+tool description contains the detailed profile and shape rules.
 
 The result is fewer walls of text: an answer about how parts connect arrives as a picture with a
 few lines around it. The block is appended to whatever the host built, is added once, and is left
@@ -142,13 +142,13 @@ The model says what a diagram is for, and the tool decides how it looks:
 
 | Profile | For | Drawn as |
 | --- | --- | --- |
-| `explain` | A diagram inside an answer | Hand drawn, neutral theme, small margins |
-| `architecture` | System and component views | Neutral theme, more room between rows so edges stay separable |
-| `data` | Schemas, tables, class relationships | Neutral theme, tight spacing: tables are tall already |
-| `docs` | Diagrams checked into a repository | Grey theme that prints in greyscale, page-sized margins |
-| `tree` | A hierarchy: an org chart, a call tree, a file layout | Dagre, which fans children out under their parent |
-| `c4` | Architecture written in the C4 convention | Architecture spacing under the C4 palette |
-| `dependency` | A graph with more nodes than usual | The tightest spacing, cutting the room edges take past nodes |
+| `explain` | States, decisions, transformations, or process flow inside an answer | Hand drawn, neutral theme, small margins |
+| `architecture` | Runtime services and infrastructure without C4 levels | Neutral theme, more room between rows so edges stay separable |
+| `data` | Stored records and relations, or types and public APIs | Neutral theme, tight spacing: tables and classes are tall already |
+| `docs` | A saved diagram when no more specific profile fits | Grey theme that prints in greyscale, page-sized margins |
+| `tree` | Folders, call trees, or other parent-child structures | Dagre, which fans children out under their parent |
+| `c4` | System scope, users, external systems, runnable units, or module responsibilities | Architecture spacing under the C4 palette |
+| `dependency` | Imports, packages, build order, coupling, impact, or cycles | The tightest spacing, cutting the room edges take past nodes |
 
 `explain` is the default and is drawn by hand: an answer in a conversation is a rough model, and a
 crisp diagram claims more precision than it has. Every other profile is crisp.

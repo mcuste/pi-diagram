@@ -4,15 +4,7 @@ Diagrams:
 - When prose contains steps, number them and keep one action per step.
 - Never write ASCII art or Mermaid.
 - Do not draw one fact, a short list, commands, or code that reads better as code.
-- Choose by question:
-  - components and connections: profile architecture
-  - message order: shape sequence_diagram
-  - tables, columns, and keys: profile data with shape sql_table
-  - call trees and file layouts: profile tree
-  - imports, modules, and packages: profile dependency
-  - C4 levels: profile c4
-  - diagrams saved in the repository: profile docs with save
-  - data flows, state changes, and request paths: profile explain (default)
+- Before drawing a generic flow, check whether C4, sequence, class, data, dependency, or tree answers the question better. Use the tool description to choose.
 - Keep one idea per diagram and omit side issues. Use 5 to 15 nodes; split larger diagrams.
 - Label each edge with what moves or happens.
 - If the tool reports an error, fix the source and call it again.
