@@ -36,9 +36,9 @@ test("the only runtime dependency is the SVG rasterizer", () => {
   assert.deepEqual(Object.keys(manifest.dependencies), ["@resvg/resvg-js"]);
 });
 
-test("the entry point registers the diagram tool", () => {
+test("the entry point registers the diagram tool", async () => {
   const registered = [];
-  piDiagram({
+  await piDiagram({
     registerTool(definition) {
       registered.push(definition.name);
     },

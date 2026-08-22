@@ -18,9 +18,9 @@ import { renderDiagram } from "../dist/render.js";
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const BOX_DRAWING = /[─-╿]/u;
 
-function tool() {
+async function tool() {
   const tools = new Map();
-  registerInto({ registerTool: (definition) => tools.set(definition.name, definition) });
+  await registerInto({ registerTool: (definition) => tools.set(definition.name, definition) });
   return tools.get("diagram");
 }
 
@@ -154,7 +154,7 @@ test("a cancelled call stops instead of returning a diagram", async () => {
 });
 
 test("the tool the hosts load renders through the real CLI", async () => {
-  const diagram = tool();
+  const diagram = await tool();
   const result = await diagram.execute(
     "e2e-1",
     { source: await fixture("flow.d2"), title: "Request path" },
@@ -386,7 +386,7 @@ test("regenerating a diagram overwrites its own files in place", async () => {
 test("the tool the hosts load saves through the real CLI", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-diagram-e2e-"));
   try {
-    const result = await tool().execute(
+    const result = await (await tool()).execute(
       "e2e-save",
       { source: await fixture("flow.d2"), title: "Request path", save: { dir: "docs/diagrams" } },
       undefined,

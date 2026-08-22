@@ -74,10 +74,11 @@ the library keeps image placement state in module scope, so two copies mean an i
 its rows and draw nothing. `tuiSpecifier` resolves it from the host entry point and falls back to a
 bare import; a local checkout would otherwise use its own copy, at its own version.
 
-Whether a terminal can show an image is known when the result is displayed, not when it is
-rendered, so both representations are always prepared. `renderResult` draws whichever fits, and
-throws only when the terminal library is missing, which tells the host to print the content
-instead.
+The async extension factory resolves the host's `pi-tui` copy and detects image support before the
+host starts its session. A tool call therefore cannot race this initialization. Whether a result
+row actually draws an image is still settled when it is displayed, so both representations are
+prepared. `renderResult` throws only when the terminal library is missing, which tells the host to
+print the content instead.
 
 So in a terminal the model gets a summary line and the diagram travels in `details`. Nothing calls
 `renderResult` in print, RPC, and JSON modes, so there `content` still carries the text.

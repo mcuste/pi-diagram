@@ -161,13 +161,14 @@ drawing.
 ## Images in the terminal
 
 On Kitty, Ghostty, WezTerm, iTerm2, and anything else that speaks a terminal image protocol,
-`auto` shows the drawn diagram. Everywhere else the same call shows box drawing, and text is
-always rendered too, because whether a terminal can display an image is only settled when the
-result reaches the screen.
+`auto` shows the drawn diagram. At host startup the extension uses the host's TUI library to detect
+whether the terminal and its harness support an image protocol. The first diagram therefore uses
+that result instead of racing the display library load. Everywhere else the same call shows box
+drawing, and text is always rendered too, because whether a terminal can display an image is only
+settled when the result reaches the screen.
 
-Nothing needs configuring. The terminal's own capabilities decide, and a terminal without an
-image protocol is never sent one. Note that a multiplexer between the terminal and the agent has
-to forward the protocol: tmux needs `allow-passthrough`, and herdr needs
+A terminal with no image protocol is never sent one. Note that a multiplexer between the terminal
+and the agent has to forward the protocol: tmux needs `allow-passthrough`, and herdr needs
 `experimental.kitty_graphics`.
 
 The image never enters the model's context. It is written to a private temporary directory and

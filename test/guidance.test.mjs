@@ -20,9 +20,9 @@ test("the guidance is registered on the host prompt hook", () => {
   assert.deepEqual([...handlers.keys()], ["before_agent_start"]);
 });
 
-test("a host without a prompt hook still loads", () => {
+test("a host without a prompt hook still loads", async () => {
   const registered = [];
-  piDiagram({
+  await piDiagram({
     registerTool(definition) {
       registered.push(definition.name);
     },

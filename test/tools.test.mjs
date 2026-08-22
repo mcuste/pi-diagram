@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
+import { promisify } from "node:util";
 import { Value } from "typebox/value";
 import { TextRenderUnavailableError } from "../dist/d2/runner.js";
 import { registerDiagramTools } from "../dist/tools.js";
@@ -280,6 +285,40 @@ test("an image is produced only in a terminal, since nothing else can show one",
       assert.equal(result.details.image === undefined, expected !== "image", String(mode));
     }
   });
+});
+
+test("startup detects host image rendering before the first TUI tool call", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-delayed-tui-"));
+  try {
+    const tui = join(root, "node_modules", "@earendil-works", "pi-tui");
+    const capability = join(root, "capability");
+    await mkdir(tui, { recursive: true });
+    await writeFile(
+      join(tui, "package.json"),
+      JSON.stringify({ name: "@earendil-works/pi-tui", type: "module", main: "index.js" }),
+    );
+    await writeFile(
+      join(tui, "index.js"),
+      [
+        'import { writeFileSync } from "node:fs";',
+        "await new Promise((resolve) => setTimeout(resolve, 25));",
+        'export const getCapabilities = () => { writeFileSync(process.env.CAPABILITY_FILE, "kitty"); return { images: "kitty", hyperlinks: false }; };',
+      ].join("\n"),
+    );
+
+    const script = [
+      `import piDiagram from ${JSON.stringify(new URL("../dist/index.js", import.meta.url).href)};`,
+      "const tools = new Map();",
+      "await piDiagram({ registerTool(tool) { tools.set(tool.name, tool); } });",
+      'if (!tools.has("diagram")) throw new Error("startup did not register the tool");',
+    ].join("\n");
+    const entry = join(root, "startup.mjs");
+    await writeFile(entry, script);
+    await promisify(execFile)(process.execPath, [entry], { env: { CAPABILITY_FILE: capability } });
+    assert.equal(await readFile(capability, "utf8"), "kitty");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("neither the image nor the diagram travels in the content the model reads", async () => {

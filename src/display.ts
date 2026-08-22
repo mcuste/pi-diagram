@@ -54,6 +54,7 @@ interface TuiModule {
 }
 
 let tui: TuiModule | undefined;
+let tuiLoading: Promise<void> | undefined;
 
 /**
  * The library keeps image placement state in module scope, so the host and this package have to
@@ -70,19 +71,24 @@ export function tuiSpecifier(entry: string | undefined): string {
   return "@earendil-works/pi-tui";
 }
 
-/** Loaded once at registration, since a render cannot wait on an import. */
+/** Resolves the host TUI and detects image support during extension startup. */
 export function primeDisplay(): Promise<void> {
   if (tui !== undefined) {
     return Promise.resolve();
   }
-  return import(tuiSpecifier(process.argv[1])).then(
+  if (tuiLoading !== undefined) {
+    return tuiLoading;
+  }
+  tuiLoading = import(tuiSpecifier(process.argv[1])).then(
     (module) => {
       tui = module as unknown as TuiModule;
+      tui.getCapabilities();
     },
     () => {
       // Text rendering needs none of this, so a missing library is not worth reporting.
     },
   );
+  return tuiLoading;
 }
 
 /** Whether the terminal speaks an image protocol, or `undefined` until the library has loaded. */

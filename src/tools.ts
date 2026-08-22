@@ -398,7 +398,7 @@ export function registerDiagramTools(
 ): void {
   const renderer = dependencies.renderer ?? new D2Cli();
   const rasterizer = dependencies.rasterizer ?? new ResvgRasterizer();
-  void primeDisplay();
+  const display = primeDisplay();
 
   pi.registerTool<typeof DiagramParameters, DiagramToolDetails>({
     name: "diagram",
@@ -414,8 +414,12 @@ export function registerDiagramTools(
     concurrency: "shared",
     executionMode: "parallel",
     async execute(_toolCallId, parameters, signal, _onUpdate, context) {
-      // Anywhere else the host prints `content`, so the diagram has to travel in it.
-      const drawnHere = context.mode === "tui" && displayLoaded();
+      let drawnHere = false;
+      if (context.mode === "tui") {
+        // Direct registrations can call the tool before the display import finishes.
+        await display;
+        drawnHere = displayLoaded();
+      }
       const rendering = await renderDiagram(
         {
           source: parameters.source,
