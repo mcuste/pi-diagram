@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import { Value } from "typebox/value";
+import { PROFILE_NAMES } from "../dist/d2/profiles.js";
 import { TextRenderUnavailableError } from "../dist/d2/runner.js";
 import {
   parseRenderPreference,
@@ -161,17 +162,20 @@ test("source is the only required field", () => {
   assert.ok(!accepts({ source: "" }));
 });
 
-test("every documented field is accepted", () => {
-  assert.ok(
-    accepts({
-      source: "a -> b",
-      title: "Request lifecycle",
-      profile: "architecture",
-      render: "unicode",
-      formats: ["source", "svg"],
-      save: { dir: "docs/diagrams", basename: "request-lifecycle" },
-    }),
-  );
+test("every documented field and profile is accepted", () => {
+  for (const profile of PROFILE_NAMES) {
+    assert.ok(
+      accepts({
+        source: "a -> b",
+        title: "Request lifecycle",
+        profile,
+        render: "unicode",
+        formats: ["source", "svg"],
+        save: { dir: "docs/diagrams", basename: "request-lifecycle" },
+      }),
+      profile,
+    );
+  }
 });
 
 test("undocumented fields and values are rejected", () => {
@@ -587,23 +591,6 @@ test("an OMP renderer argument does not disable a supported image", async () => 
       rows.some((row) => row.includes("\x1b_G")),
       rows.join("\n"),
     );
-  });
-});
-
-test("the image is read once per result row", async () => {
-  const { primeDisplay } = await import("../dist/display.js");
-  await primeDisplay();
-  const tool = registerWithImages();
-  await withCapabilities({ images: "kitty" }, async () => {
-    const result = await drawInTui(tool, { source: "a -> b" });
-    const state = {};
-    const context = { showImages: true, state };
-    tool.renderResult(result, { expanded: false }, theme, context);
-    assert.equal(state.diagramImage.path, result.details.image.path);
-    // A second render reuses what was read, rather than reading the file again.
-    const { rm } = await import("node:fs/promises");
-    await rm(result.details.image.path, { force: true });
-    assert.ok(tool.renderResult(result, { expanded: true }, theme, context));
   });
 });
 

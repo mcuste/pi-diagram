@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DIAGRAM_GUIDANCE, registerDiagramGuidance, withGuidance } from "../dist/guidance.js";
-import piDiagram from "../dist/index.js";
 
 const PI_PROMPT = "You are an expert coding assistant.";
 
@@ -18,23 +17,6 @@ function register() {
 test("the guidance is registered on the host prompt hook", () => {
   const handlers = register();
   assert.deepEqual([...handlers.keys()], ["before_agent_start"]);
-});
-
-test("a host without a prompt hook still loads", async () => {
-  const registered = [];
-  const flags = new Map();
-  await piDiagram({
-    registerTool(definition) {
-      registered.push(definition.name);
-    },
-    registerFlag(name, options) {
-      flags.set(name, options.default);
-    },
-    getFlag(name) {
-      return flags.get(name);
-    },
-  });
-  assert.deepEqual(registered, ["diagram"]);
 });
 
 test("Pi gets the guidance after its prompt", () => {

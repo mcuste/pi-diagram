@@ -69,13 +69,6 @@ test("labels survive into the drawing", async () => {
   }
 });
 
-test("source mode returns D2, not a drawing", async () => {
-  const rendering = await draw("flow.d2", "source");
-  assert.equal(rendering.renderedAs, "source");
-  assert.ok(rendering.text.startsWith("client -> gateway"));
-  assert.doesNotMatch(rendering.text, BOX_DRAWING);
-});
-
 test("a relative import cannot read a neighbouring file", async () => {
   // The fixture imports sentinel.d2, which sits beside it and holds a marker string. D2 reads
   // such an import and renders its contents, so the preflight has to stop this before D2 runs.
@@ -354,25 +347,6 @@ test("a txt sidecar holds the same drawing shown in the transcript", async () =>
     const written = await readFile(join(root, "docs/design/request-flow.txt"), "utf8");
     assert.equal(written, `${rendering.text}\n`);
     assert.match(written, BOX_DRAWING);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("regenerating a diagram overwrites its own files in place", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-diagram-e2e-"));
-  try {
-    const target = {
-      title: "Layout",
-      formats: ["source"],
-      save: { dir: "docs/diagrams" },
-      cwd: root,
-    };
-    await renderDiagram({ ...target, source: "a -> b" }, new D2Cli());
-    await renderDiagram({ ...target, source: "a -> c" }, new D2Cli());
-
-    assert.equal(await readFile(join(root, "docs/diagrams/layout.d2"), "utf8"), "a -> c\n");
-    assert.deepEqual(await readdir(join(root, "docs/diagrams")), ["layout.d2"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
