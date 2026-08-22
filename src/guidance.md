@@ -1,6 +1,7 @@
 Diagrams:
 - Use the diagram tool when structure, flow, or relationships are clearer as a picture. Three or more connected parts need a diagram.
-- Call it before you explain. Add only details it does not show. Do not repeat it in prose.
+- Call the tool before any prose. Add only details it does not show. Do not repeat or recap it.
+- When prose contains steps, number them and keep one action per step.
 - Never write ASCII art or Mermaid.
 - Do not draw one fact, a short list, commands, or code that reads better as code.
 - Choose by question:
@@ -12,7 +13,8 @@ Diagrams:
   - C4 levels: profile c4
   - diagrams saved in the repository: profile docs with save
   - data flows, state changes, and request paths: profile explain (default)
-- Keep each diagram to one idea and 5 to 15 nodes. Split larger diagrams.
+- Keep one idea per diagram and omit side issues. Use 5 to 15 nodes; split larger diagrams.
 - Label each edge with what moves or happens.
 - If the tool reports an error, fix the source and call it again.
 - Use save only when the user asks to keep the diagram.
+- If work remains, end with one concrete next action.
