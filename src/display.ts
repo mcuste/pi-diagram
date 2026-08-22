@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -56,19 +56,17 @@ interface TuiModule {
 let tui: TuiModule | undefined;
 let tuiLoading: Promise<void> | undefined;
 
-/**
- * The library keeps image placement state in module scope, so the host and this package have to
- * use the same copy. A local checkout has its own, which wins by bare name.
- */
-export function tuiSpecifier(entry: string | undefined): string {
-  if (entry !== undefined) {
-    try {
-      return pathToFileURL(createRequire(entry).resolve("@earendil-works/pi-tui")).href;
-    } catch {
-      // Not resolvable from the host, so fall back to whatever this package can see.
-    }
+/** Uses the real host entry so executable symlinks resolve the host's TUI copy. */
+export function tuiSpecifier(entry: string | undefined): string | undefined {
+  if (entry === undefined) {
+    return undefined;
   }
-  return "@earendil-works/pi-tui";
+  try {
+    const hostEntry = realpathSync(entry);
+    return pathToFileURL(createRequire(hostEntry).resolve("@earendil-works/pi-tui")).href;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Resolves the host TUI and detects image support during extension startup. */
@@ -79,7 +77,9 @@ export function primeDisplay(): Promise<void> {
   if (tuiLoading !== undefined) {
     return tuiLoading;
   }
-  tuiLoading = import(tuiSpecifier(process.argv[1])).then(
+  const specifier = tuiSpecifier(process.argv[1]);
+  const loading = specifier === undefined ? import("@earendil-works/pi-tui") : import(specifier);
+  tuiLoading = loading.then(
     (module) => {
       tui = module as unknown as TuiModule;
       tui.getCapabilities();

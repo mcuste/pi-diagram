@@ -12,8 +12,7 @@
     "d2",
     "architecture-diagram",
     "sequence-diagram",
-    "svg",
-    "ascii"
+    "svg"
   ],
   "license": "MIT",
   "author": "mcuste",

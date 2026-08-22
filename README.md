@@ -14,9 +14,9 @@ If any of those names are new to you:
 - **Pi** and **Oh My Pi** are terminal coding agents. An **extension** is an npm package they load
   at startup to add tools the model can call.
 
-> **Status: images, text, and files work.** In a terminal that supports inline images the diagram
-> itself is shown; everywhere else it is box drawing or plain ASCII. Files land outside the
-> repository unless a destination is named.
+> **Status: images, text, and files work.** Unicode box drawing is the default. Users can opt in
+> to inline images where the terminal supports them. Files land outside the repository unless a
+> destination is named.
 
 ## Why
 
@@ -118,7 +118,7 @@ language.
 | --- | --- |
 | `source` | The diagram, in D2 |
 | `title` | Label shown above the diagram |
-| `render` | `auto` and `image` show a picture where the terminal can, `unicode` draws box drawing, `ascii` plain 7-bit, `source` echoes the D2 |
+| `render` | `auto` uses the user preference; `image` and `unicode` override it; `source` echoes the D2 |
 | `profile` | What the diagram is for. It sets the layout engine, theme, and spacing |
 | `formats` | Files to produce: `source`, `svg`, `png`, `txt`. Written outside the repository |
 | `save` | Also copy them into the repository. `dir` is required |
@@ -160,12 +160,34 @@ drawing.
 
 ## Images in the terminal
 
+Unicode is the default. To persist image rendering for one repository, create
+`.pi/pi-diagram.json` for Pi or `.omp/pi-diagram.json` for OMP:
+
+```json
+{
+  "render": "image"
+}
+```
+
+For every repository, use `~/.pi/agent/pi-diagram.json` or
+`~/.omp/agent/pi-diagram.json`. `PI_CODING_AGENT_DIR` replaces those agent directories when set.
+
+For one run, use the host extension flag or environment variable:
+
+```sh
+pi --diagram-render image
+omp --diagram-render image
+PI_DIAGRAM_RENDER=image pi
+```
+
+Precedence is command-line flag, `PI_DIAGRAM_RENDER`, project configuration, global
+configuration, then the Unicode default.
+
 On Kitty, Ghostty, WezTerm, iTerm2, and anything else that speaks a terminal image protocol,
-`auto` shows the drawn diagram. At host startup the extension uses the host's TUI library to detect
-whether the terminal and its harness support an image protocol. The first diagram therefore uses
-that result instead of racing the display library load. Everywhere else the same call shows box
-drawing, and text is always rendered too, because whether a terminal can display an image is only
-settled when the result reaches the screen.
+`auto` then shows the drawn diagram. At host startup the extension uses the host's TUI library to
+detect whether the terminal and its harness support an image protocol. If image rendering is
+disabled or unavailable, the call shows Unicode and reports `Image support is unavailable;
+generated as Unicode.` Explicit `render: "unicode"` never attempts an image.
 
 A terminal with no image protocol is never sent one. Note that a multiplexer between the terminal
 and the agent has to forward the protocol: tmux needs `allow-passthrough`, and herdr needs

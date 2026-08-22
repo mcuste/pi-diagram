@@ -20,7 +20,12 @@ const BOX_DRAWING = /[─-╿]/u;
 
 async function tool() {
   const tools = new Map();
-  await registerInto({ registerTool: (definition) => tools.set(definition.name, definition) });
+  const flags = new Map();
+  await registerInto({
+    registerTool: (definition) => tools.set(definition.name, definition),
+    registerFlag: (name, options) => flags.set(name, options.default),
+    getFlag: (name) => flags.get(name),
+  });
   return tools.get("diagram");
 }
 
@@ -62,15 +67,6 @@ test("labels survive into the drawing", async () => {
   for (const label of ["users", "orders", "user_id", "varchar"]) {
     assert.ok(erd.text.includes(label), `erd lost ${label}`);
   }
-});
-
-test("plain ASCII output uses no character above 7 bits", async () => {
-  const rendering = await draw("containers.d2", "ascii");
-  assert.equal(rendering.renderedAs, "ascii");
-  for (const character of rendering.text) {
-    assert.ok(character.codePointAt(0) < 128, `found ${JSON.stringify(character)}`);
-  }
-  assert.match(rendering.text, /[+\-|]/u);
 });
 
 test("source mode returns D2, not a drawing", async () => {

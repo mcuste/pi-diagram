@@ -9,8 +9,8 @@ import { type Diagnostic, DiagramSourceError } from "./d2/diagnostics.js";
 import { parseSafeSource, type SafeD2Source } from "./d2/preflight.js";
 import { type ProfileName, parseProfile } from "./d2/profiles.js";
 import {
-  type AsciiMode,
   type D2Renderer,
+  type D2Text,
   type SupportedD2Version,
   TextRenderUnavailableError,
 } from "./d2/runner.js";
@@ -26,11 +26,8 @@ import {
  * D2's text renderer is beta, so a diagram it cannot draw has to fail in a way the user can
  * understand rather than turning into broken box art or a different graph.
  */
+export type Representation = "unicode" | "source";
 
-/** How the diagram is drawn as text. */
-export type Representation = "unicode" | "ascii" | "source";
-
-/** Bounds for one transcript diagram. */
 const MAX_LINES = 300;
 const MAX_COLUMNS = 400;
 const MAX_BYTES = 32 * 1024;
@@ -84,8 +81,6 @@ export function parseRepresentation(requested: unknown): Representation {
     case "image":
     case "unicode":
       return "unicode";
-    case "ascii":
-      return "ascii";
     case "source":
       return "source";
     default:
@@ -93,7 +88,7 @@ export function parseRepresentation(requested: unknown): Representation {
         {
           code: "D2_SOURCE",
           message: `${JSON.stringify(requested)} is not a render mode.`,
-          hint: "Use auto, image, unicode, ascii, or source.",
+          hint: "Use auto, image, unicode, or source.",
         },
       ]);
   }
@@ -131,18 +126,7 @@ export async function renderDiagram(
   const showsImage = wantsImage(request);
   const savesPng = names?.formats.includes("png") === true;
   const wantsText = representation !== "source" || names?.formats.includes("txt") === true;
-  let mode: AsciiMode = representation === "ascii" ? "standard" : "extended";
-  let drawn = wantsText ? await tryRender(renderer, source, mode, request.signal) : undefined;
-
-  if (drawn instanceof TextRenderUnavailableError && mode === "extended") {
-    // Exactly one fallback attempt, so a beta renderer cannot be retried indefinitely.
-    const retry = await tryRender(renderer, source, "standard", request.signal);
-    if (!(retry instanceof TextRenderUnavailableError)) {
-      notes.push("Unicode output failed, so this diagram is drawn in plain ASCII.");
-      mode = "standard";
-      drawn = retry;
-    }
-  }
+  const drawn = wantsText ? await tryRender(renderer, source, request.signal) : undefined;
 
   const textFailure = drawn instanceof TextRenderUnavailableError ? drawn : undefined;
   const text = drawn instanceof TextRenderUnavailableError ? undefined : drawn?.text;
@@ -214,7 +198,7 @@ export async function renderDiagram(
     profile: profile.name,
     sourceHash: normalized.hash,
     ...measure(showSource ? source : (text as string), MAX_COLUMNS),
-    renderedAs: showSource ? "source" : mode === "standard" ? "ascii" : "unicode",
+    renderedAs: showSource ? "source" : "unicode",
     text: showSource ? source : (text as string),
     source,
     diagnostics: [],
@@ -288,18 +272,14 @@ async function keepImage(
   }
 }
 
-/**
- * Returns a text-renderer failure as a value so the caller can decide whether to retry.
- * Everything else, including source errors and cancellation, still throws.
- */
+/** Preserves usable images and artifacts when text rendering fails. */
 async function tryRender(
   renderer: D2Renderer,
   source: SafeD2Source,
-  asciiMode: AsciiMode,
   signal: AbortSignal | undefined,
-): Promise<Awaited<ReturnType<D2Renderer["renderText"]>> | TextRenderUnavailableError> {
+): Promise<D2Text | TextRenderUnavailableError> {
   try {
-    return await renderer.renderText({ source, asciiMode, signal });
+    return await renderer.renderText({ source, asciiMode: "extended", signal });
   } catch (error) {
     if (error instanceof TextRenderUnavailableError) {
       return error;

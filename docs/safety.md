@@ -65,7 +65,6 @@ before looking for anything else. That matters in both directions:
 D2 exiting zero is not taken as proof the output is usable. Before anything is displayed:
 
 - The drawing is not blank. D2's text renderer can return an empty box instead of failing.
-- Plain ASCII output really is 7-bit, so a mode that silently stopped working is caught.
 - Unicode output contains box-drawing characters, so a text-only answer is not mistaken for a
   diagram.
 - Nothing but newlines can control the terminal. No escape sequence reaches the transcript.
@@ -120,11 +119,8 @@ either, and sizes the boxes as if it had.
 
 ## Known limits of D2's text renderer
 
-D2's ASCII and Unicode export is beta. Two cases are worth knowing, and both are why the source
-check refuses more than security alone would require:
+D2's Unicode export is beta. Block string labels (`|md ... |`) can draw an empty box and lose
+their text, which is one reason the source check refuses more than security alone would require.
 
-- Block string labels (`|md ... |`) draw an empty box, losing the text.
-- `shape: text` keeps its box but loses its label.
-
-When text cannot represent a diagram at all, the tool retries once in plain ASCII and then says
-so. It never substitutes a different diagram.
+When Unicode cannot represent a diagram, the call fails with a concise explanation. It never
+substitutes ASCII or a different diagram.

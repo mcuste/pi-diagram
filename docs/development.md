@@ -7,7 +7,8 @@
 | `src/index.ts` | Extension entry point; both hosts load it directly |
 | `src/tools.ts` | The `diagram` tool: schema, approval tier, and result shape |
 | `src/guidance.ts` | The prompt block that tells the model when to draw, and how it is appended |
-| `src/render.ts` | Representation choice, the text fallback ladder, and transcript limits |
+| `src/render.ts` | Representation choice, Unicode fallback, and transcript limits |
+| `src/config.ts` | Persistent render preference paths and precedence |
 | `src/raster.ts` | Drawing the SVG as a PNG, and the checks on what comes back |
 | `src/display.ts` | Building the terminal components, including the inline image |
 | `src/d2/fonts.ts` | Recovering the fonts D2 embeds in its SVG, and what they can draw |
@@ -71,8 +72,9 @@ needed for the click: the terminal itself opens the file.
 
 `@earendil-works/pi-tui` has to be the host's copy. The host paints the components built here, and
 the library keeps image placement state in module scope, so two copies mean an image can reserve
-its rows and draw nothing. `tuiSpecifier` resolves it from the host entry point and falls back to a
-bare import; a local checkout would otherwise use its own copy, at its own version.
+its rows and draw nothing. `tuiSpecifier` resolves the real host entry point first, so an
+executable symlink still leads to the host package. The static bare fallback lets OMP remap the
+legacy package name to its in-process compatibility module.
 
 The async extension factory resolves the host's `pi-tui` copy and detects image support before the
 host starts its session. A tool call therefore cannot race this initialization. Whether a result
@@ -116,10 +118,15 @@ pnpm release <version> # Prepare, gate, commit, and tag a release
 
 ## Testing against a real host
 
+The default is Unicode. Disable discovered extensions so an installed copy of this package cannot
+conflict with the working copy:
+
 ```bash
-pi -e ./src/index.ts
-omp -e ./src/index.ts
+pi -ne -e ./src/index.ts
+omp --no-extensions -e ./src/index.ts
 ```
+
+Add `--diagram-render image` to test the image path.
 
 Or install the working copy:
 

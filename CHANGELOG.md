@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Inline PNGs now use the host TUI when Pi starts through an executable symlink. OMP tool
+  arguments also no longer disable images by being mistaken for Pi's row context.
+- Unicode is now the only text rendering. The public `ascii` mode and automatic ASCII retry were
+  removed.
+- Terminal rendering defaults to Unicode. Users can opt in to images with
+  `--diagram-render image` or `PI_DIAGRAM_RENDER=image`.
+- An image preference falls back to Unicode when image display is disabled or unavailable, and
+  reports that fallback on every affected diagram.
+- Render preferences can be stored globally in each host's agent directory or per project in
+  `.pi/pi-diagram.json` and `.omp/pi-diagram.json`. Flags and environment variables override
+  persistent configuration.
+
 ## [0.2.1] - 2026-08-22
 
 ### Fixed

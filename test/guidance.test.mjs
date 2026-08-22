@@ -22,9 +22,16 @@ test("the guidance is registered on the host prompt hook", () => {
 
 test("a host without a prompt hook still loads", async () => {
   const registered = [];
+  const flags = new Map();
   await piDiagram({
     registerTool(definition) {
       registered.push(definition.name);
+    },
+    registerFlag(name, options) {
+      flags.set(name, options.default);
+    },
+    getFlag(name) {
+      return flags.get(name);
     },
   });
   assert.deepEqual(registered, ["diagram"]);

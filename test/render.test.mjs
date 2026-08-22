@@ -8,23 +8,16 @@ import { ImageRenderUnavailableError } from "../dist/raster.js";
 import { parseRepresentation, renderDiagram } from "../dist/render.js";
 
 const UNICODE_DIAGRAM = "┌────┐\n│ a  │\n└────┘";
-const ASCII_DIAGRAM = "+----+\n| a  |\n+----+";
 
 const SVG = '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>';
 
-/** Answers with a diagram, or fails, per ASCII mode. Records what it was asked for. */
-function createRenderer({
-  extended = UNICODE_DIAGRAM,
-  standard = ASCII_DIAGRAM,
-  svg = SVG,
-  formatted,
-} = {}) {
+function createRenderer({ extended = UNICODE_DIAGRAM, svg = SVG, formatted } = {}) {
   const calls = [];
   return {
     calls,
     renderText({ source, asciiMode, signal }) {
       calls.push({ kind: "text", source, asciiMode, signal });
-      const answer = asciiMode === "standard" ? standard : extended;
+      const answer = extended;
       if (answer instanceof Error) {
         return Promise.reject(answer);
       }
@@ -55,12 +48,11 @@ test("every render mode the schema allows maps onto something this build can dra
   for (const requested of [undefined, "auto", "image", "unicode"]) {
     assert.equal(parseRepresentation(requested), "unicode");
   }
-  assert.equal(parseRepresentation("ascii"), "ascii");
   assert.equal(parseRepresentation("source"), "source");
 });
 
 test("a render mode outside the schema is refused rather than guessed at", () => {
-  for (const requested of ["svg", "png", "", 3, null]) {
+  for (const requested of ["ascii", "svg", "png", "", 3, null]) {
     assert.throws(
       () => parseRepresentation(requested),
       { name: "DiagramSourceError" },
@@ -127,49 +119,16 @@ test("the source that was drawn comes back for the expanded row", async () => {
   assert.deepEqual(rendering.diagnostics, []);
 });
 
-test("ascii mode asks for standard characters", async () => {
-  const renderer = createRenderer();
-  const rendering = await renderDiagram({ source: "a -> b", render: "ascii" }, renderer);
-  assert.equal(rendering.renderedAs, "ascii");
-  assert.equal(rendering.text, ASCII_DIAGRAM);
-  assert.deepEqual(
-    textCalls(renderer).map((call) => call.asciiMode),
-    ["standard"],
-  );
-});
-
-test("Unicode that cannot be drawn is retried once in plain ASCII", async () => {
+test("Unicode failure is not replaced with ASCII", async () => {
   const renderer = createRenderer({ extended: new TextRenderUnavailableError("beta renderer") });
-  const rendering = await renderDiagram({ source: "a -> b" }, renderer);
-  assert.equal(rendering.renderedAs, "ascii");
-  assert.equal(rendering.text, ASCII_DIAGRAM);
-  assert.deepEqual(rendering.notes, [
-    "Unicode output failed, so this diagram is drawn in plain ASCII.",
-  ]);
-  assert.deepEqual(
-    textCalls(renderer).map((call) => call.asciiMode),
-    ["extended", "standard"],
-  );
-});
-
-test("when neither mode works the user is told, and no other diagram is invented", async () => {
-  const renderer = createRenderer({
-    extended: new TextRenderUnavailableError("beta renderer"),
-    standard: new TextRenderUnavailableError("beta renderer"),
-  });
   await assert.rejects(renderDiagram({ source: "a -> b" }, renderer), {
     name: "TextRenderUnavailableError",
     message: /beta and cannot draw every diagram.*render: "source"/s,
   });
-  assert.equal(textCalls(renderer).length, 2, "gave up after one retry");
-});
-
-test("a request for plain ASCII is not retried, because there is nothing to fall back to", async () => {
-  const renderer = createRenderer({ standard: new TextRenderUnavailableError("beta renderer") });
-  await assert.rejects(renderDiagram({ source: "a -> b", render: "ascii" }, renderer), {
-    name: "TextRenderUnavailableError",
-  });
-  assert.equal(textCalls(renderer).length, 1);
+  assert.deepEqual(
+    textCalls(renderer).map((call) => call.asciiMode),
+    ["extended"],
+  );
 });
 
 test("source problems are reported before D2 is ever started", async () => {
@@ -394,7 +353,7 @@ test("a host that can show images gets one, with text kept as the fallback", asy
 });
 
 test("asking for a text representation keeps the image out", async () => {
-  for (const render of ["unicode", "ascii", "source"]) {
+  for (const render of ["unicode", "source"]) {
     const rasterizer = createRasterizer();
     const rendering = await renderDiagram(
       { source: "a -> b", render, images: true },

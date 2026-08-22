@@ -1,4 +1,14 @@
 import { type Static, type TSchema, Type } from "typebox";
+import {
+  parseRenderPreference,
+  type RenderPreference,
+  type RenderPreferenceOptions,
+  resolveRenderPreference,
+} from "./config.js";
+
+export type { RenderPreference } from "./config.js";
+export { parseRenderPreference } from "./config.js";
+
 import { parseArtifactNames, workspacePaths } from "./artifacts.js";
 import { type Diagnostic, formatDiagnostic } from "./d2/diagnostics.js";
 import { DEFAULT_PROFILE, type ProfileName } from "./d2/profiles.js";
@@ -24,6 +34,31 @@ import { type DiagramRendering, type Representation, renderDiagram } from "./ren
 const MAX_SOURCE_LENGTH = 20_000;
 const MAX_TITLE_LENGTH = 120;
 const MAX_PATH_LENGTH = 255;
+
+const DEFAULT_RENDER_PREFERENCE: RenderPreference = "unicode";
+const IMAGE_UNAVAILABLE_WARNING = "Image support is unavailable; generated as Unicode.";
+const RENDER_FLAG = "diagram-render";
+
+export interface DiagramPreferenceApi {
+  registerFlag(
+    name: string,
+    options: { readonly description: string; readonly type: "string"; readonly default: string },
+  ): void;
+  getFlag(name: string): boolean | string | undefined;
+}
+
+export async function registerDiagramPreference(
+  pi: DiagramPreferenceApi,
+  options: RenderPreferenceOptions = {},
+): Promise<() => RenderPreference> {
+  const defaultPreference = await resolveRenderPreference(options);
+  pi.registerFlag(RENDER_FLAG, {
+    description: "Default diagram rendering: unicode or image",
+    type: "string",
+    default: defaultPreference,
+  });
+  return () => parseRenderPreference(pi.getFlag(RENDER_FLAG));
+}
 
 const DiagramSource = Type.String({
   minLength: 1,
@@ -55,16 +90,10 @@ const DiagramProfile = Type.Union(
 );
 
 const DiagramRender = Type.Union(
-  [
-    Type.Literal("auto"),
-    Type.Literal("image"),
-    Type.Literal("unicode"),
-    Type.Literal("ascii"),
-    Type.Literal("source"),
-  ],
+  [Type.Literal("auto"), Type.Literal("image"), Type.Literal("unicode"), Type.Literal("source")],
   {
     description:
-      "Preferred representation in the transcript. `auto` shows an image where the terminal supports it and Unicode text otherwise.",
+      "`auto` uses the user's diagram render preference. Explicit `image`, `unicode`, and `source` override it for this call.",
   },
 );
 
@@ -149,7 +178,7 @@ const DIAGRAM_DESCRIPTION = [
   "Files: `formats` produces .d2, .svg, .png, or .txt outside the repository and returns the",
   "paths. `save: { dir }` also copies them into the repository, so Markdown can reference the",
   "SVG. Only pass `save` when the user asked to keep the diagram; explaining something needs",
-  "neither. A terminal that can show images shows one without being asked.",
+  "neither. `auto` uses the user's render preference, which defaults to Unicode.",
 ].join("\n");
 
 /**
@@ -161,6 +190,8 @@ interface DiagramToolDetails {
   readonly title?: string;
   readonly profile: ProfileName;
   readonly requested: Static<typeof DiagramRender>;
+  readonly effectiveRender: Exclude<Static<typeof DiagramRender>, "auto">;
+  readonly imageSupported: boolean;
   readonly renderedAs: DisplayedAs;
   readonly image?: { readonly path: string; readonly widthPx: number; readonly heightPx: number };
   /** The diagram as text, for the renderer and as the fallback for an image. */
@@ -225,7 +256,7 @@ interface ToolDefinition<TParameters extends TSchema, TDetails> {
     result: { readonly content: readonly TextContent[]; readonly details: TDetails },
     options: { readonly expanded: boolean; readonly isPartial: boolean },
     theme: DisplayTheme,
-    context: DisplayContext,
+    context?: unknown,
   ) => Component;
   execute(
     toolCallId: string,
@@ -234,6 +265,34 @@ interface ToolDefinition<TParameters extends TSchema, TDetails> {
     onUpdate: unknown,
     context: ToolContext,
   ): Promise<ToolResult<TDetails>>;
+}
+
+const fallbackDisplayStates = new WeakMap<object, Record<string, unknown>>();
+
+function displayContextFor(
+  details: DiagramToolDetails,
+  expanded: boolean,
+  context: unknown,
+): DisplayContext {
+  const record =
+    typeof context === "object" && context !== null
+      ? (context as Record<string, unknown>)
+      : undefined;
+  const hostState = record?.state;
+  let state =
+    typeof hostState === "object" && hostState !== null
+      ? (hostState as Record<string, unknown>)
+      : fallbackDisplayStates.get(details);
+  if (state === undefined) {
+    state = {};
+    fallbackDisplayStates.set(details, state);
+  }
+  return {
+    // OMP passes tool arguments here instead of Pi's row context.
+    showImages: typeof record?.showImages === "boolean" ? record.showImages : true,
+    expanded,
+    state,
+  };
 }
 
 export interface DiagramExtensionApi {
@@ -245,6 +304,7 @@ export interface DiagramExtensionApi {
 export interface DiagramExtensionDependencies {
   readonly renderer?: D2Renderer;
   readonly rasterizer?: SvgRasterizer;
+  readonly renderPreference?: () => RenderPreference;
 }
 
 /** Only `save` reaches the repository. The temp store changes nothing worth approving. */
@@ -299,19 +359,18 @@ function callView(args: Partial<DiagramParameters>): DiagramCallView {
   };
 }
 
-/** How each representation is named to the reader. */
 const DRAWN: Readonly<Record<DisplayedAs, string>> = {
   image: "an image",
   unicode: "box drawing",
-  ascii: "plain ASCII",
   source: "D2 source",
 };
 
-/**
- * What the model reads. The diagram is left out when this package draws the row, and the summary
- * says so, because an empty-looking result invites the model to render again.
- */
-function contentFor(rendering: DiagramRendering, drawnHere: boolean): string {
+/** Prevents the model from redrawing a diagram omitted from its context. */
+function contentFor(
+  rendering: DiagramRendering,
+  drawnHere: boolean,
+  notes: readonly string[],
+): string {
   const paths = rendering.saved.map((artifact) => artifact.path).join(", ");
   const saved =
     rendering.saved.length === 0
@@ -320,7 +379,7 @@ function contentFor(rendering: DiagramRendering, drawnHere: boolean): string {
         ? `saved in the repository: ${paths}`
         : `saved outside the repository: ${paths}`;
   const blocks = drawnHere ? [summaryFor(rendering)] : [rendering.title, rendering.text];
-  return [...blocks, saved, ...rendering.notes.map((note) => `note: ${note}`)]
+  return [...blocks, saved, ...notes.map((note) => `note: ${note}`)]
     .filter((block): block is string => Boolean(block))
     .join("\n\n");
 }
@@ -352,6 +411,9 @@ function outputsFor(rendering: DiagramRendering): Readonly<Record<string, string
 function detailsFor(
   parameters: DiagramParameters,
   rendering: DiagramRendering,
+  effectiveRender: DiagramToolDetails["effectiveRender"],
+  imageSupported: boolean,
+  notes: readonly string[],
 ): DiagramToolDetails {
   const outputs = outputsFor(rendering);
   return {
@@ -359,6 +421,8 @@ function detailsFor(
     ...(rendering.title === undefined ? {} : { title: rendering.title }),
     profile: rendering.profile,
     requested: parameters.render ?? "auto",
+    effectiveRender,
+    imageSupported,
     renderedAs: rendering.image === undefined ? rendering.renderedAs : "image",
     ...(rendering.image === undefined ? {} : { image: rendering.image }),
     textPreview: rendering.text,
@@ -369,22 +433,24 @@ function detailsFor(
     widthCells: rendering.widthCells,
     ...(rendering.d2Version === undefined ? {} : { d2Version: rendering.d2Version }),
     ...(outputs === undefined ? {} : { outputs }),
-    ...(rendering.notes.length === 0 ? {} : { notes: rendering.notes }),
+    ...(notes.length === 0 ? {} : { notes }),
   };
 }
 
-/** Saved and temporary file paths, for the expanded view. */
 function pathsFor(details: DiagramToolDetails): readonly string[] {
   return Object.entries(details.outputs ?? {})
     .filter(([key]) => key !== "location")
     .map(([, path]) => path);
 }
 
-/** The expanded row: how it was drawn, where the files are, what went wrong, and the source. */
 function expandedLines(details: DiagramToolDetails): readonly string[] {
   const version = details.d2Version === undefined ? "" : `, D2 ${details.d2Version}`;
+  const selection =
+    details.requested === "auto"
+      ? `Requested auto, resolved to ${details.effectiveRender}`
+      : `Requested ${details.requested}`;
   const lines = [
-    `Drawn as ${DRAWN[details.renderedAs]}, profile ${details.profile}${version}`,
+    `${selection}; drawn as ${DRAWN[details.renderedAs]}, profile ${details.profile}${version}`,
     ...pathsFor(details),
     ...(details.diagnostics ?? []).map(formatDiagnostic),
   ];
@@ -398,6 +464,7 @@ export function registerDiagramTools(
 ): void {
   const renderer = dependencies.renderer ?? new D2Cli();
   const rasterizer = dependencies.rasterizer ?? new ResvgRasterizer();
+  const renderPreference = dependencies.renderPreference ?? (() => DEFAULT_RENDER_PREFERENCE);
   const display = primeDisplay();
 
   pi.registerTool<typeof DiagramParameters, DiagramToolDetails>({
@@ -407,12 +474,12 @@ export function registerDiagramTools(
     parameters: DiagramParameters,
     approval: approvalFor,
     formatApprovalDetails: approvalDetails,
-    renderCall(args, theme) {
-      return renderDiagramCall(callView(args), theme);
-    },
     loadMode: "discoverable",
     concurrency: "shared",
     executionMode: "parallel",
+    renderCall(args, theme) {
+      return renderDiagramCall(callView(args), theme);
+    },
     async execute(_toolCallId, parameters, signal, _onUpdate, context) {
       let drawnHere = false;
       if (context.mode === "tui") {
@@ -420,39 +487,55 @@ export function registerDiagramTools(
         await display;
         drawnHere = displayLoaded();
       }
+      const effectiveRender =
+        parameters.render === undefined || parameters.render === "auto"
+          ? renderPreference()
+          : parameters.render;
+      const imageSupported = drawnHere && imagesSupported() === true;
       const rendering = await renderDiagram(
         {
           source: parameters.source,
           title: parameters.title,
           profile: parameters.profile,
-          render: parameters.render,
+          render: effectiveRender,
           formats: parameters.formats,
           save: parameters.save,
           cwd: context.cwd,
-          // Drawing an image nothing can show would cost an SVG render for nothing.
-          images: drawnHere && imagesSupported() !== false,
+          images: imageSupported,
           signal,
         },
         renderer,
         rasterizer,
       );
+      const notes =
+        effectiveRender === "image" && !imageSupported
+          ? [...rendering.notes, IMAGE_UNAVAILABLE_WARNING]
+          : rendering.notes;
       return {
-        content: [{ type: "text", text: contentFor(rendering, drawnHere) }],
-        details: detailsFor(parameters, rendering),
+        content: [{ type: "text", text: contentFor(rendering, drawnHere, notes) }],
+        details: detailsFor(parameters, rendering, effectiveRender, imageSupported, notes),
       };
     },
     renderResult(result, options, theme, context) {
       const details = result.details;
+      const displayContext = displayContextFor(details, options.expanded, context);
+      const imageUnavailable =
+        details.effectiveRender === "image" &&
+        (!details.imageSupported || !displayContext.showImages || imagesSupported() !== true);
+      const notes =
+        imageUnavailable && !details.notes?.includes(IMAGE_UNAVAILABLE_WARNING)
+          ? [...(details.notes ?? []), IMAGE_UNAVAILABLE_WARNING]
+          : (details.notes ?? []);
       return renderDiagramResult(
         {
           image: details.image,
           title: details.title,
           text: details.textPreview,
-          notes: details.notes ?? [],
+          notes,
           details: expandedLines(details),
         },
         theme,
-        { showImages: context.showImages, expanded: options.expanded, state: context.state },
+        displayContext,
       );
     },
   });
