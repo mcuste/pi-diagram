@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { DiagramSourceError } from "./d2/diagnostics.js";
 import { describeCodePoint, findTerminalControl } from "./terminal.js";
+import { describeUnknown } from "./unknown.js";
 
 /** Byte-level enforcement of the schema's character limit in `tools.ts`. */
 const MAX_SOURCE_BYTES = 20 * 1024;
@@ -10,6 +11,7 @@ const BYTE_ORDER_MARK = 0xfeff;
 
 declare const normalizedSourceBrand: unique symbol;
 declare const safeTitleBrand: unique symbol;
+declare const sourceHashBrand: unique symbol;
 
 /**
  * Source in canonical form: no byte-order mark, LF endings, trimmed, no control characters,
@@ -20,9 +22,12 @@ export type NormalizedD2Source = string & { readonly [normalizedSourceBrand]: tr
 /** A single-line title of bounded length, safe to show beside the diagram. */
 export type SafeTitle = string & { readonly [safeTitleBrand]: true };
 
+/** A SHA-256 digest of normalized diagram source. */
+export type SourceHash = string & { readonly [sourceHashBrand]: true };
+
 export interface NormalizedSource {
   readonly text: NormalizedD2Source;
-  readonly hash: string;
+  readonly hash: SourceHash;
   readonly lineCount: number;
 }
 
@@ -72,16 +77,22 @@ export function normalizeSource(raw: unknown): NormalizedSource {
     ]);
   }
 
+  const hash = createHash("sha256").update(text, "utf8").digest("hex");
   return {
     text: text as NormalizedD2Source,
-    hash: createHash("sha256").update(text, "utf8").digest("hex"),
+    hash: parseSourceHash(hash),
     lineCount: text.split("\n").length,
   };
 }
 
 export function parseTitle(raw: unknown): SafeTitle | undefined {
-  if (typeof raw !== "string") {
+  if (raw === undefined) {
     return undefined;
+  }
+  if (typeof raw !== "string") {
+    throw new DiagramSourceError("Diagram title must be a string.", [
+      { code: "D2_SOURCE", message: `Received ${describeUnknown(raw)}.` },
+    ]);
   }
   if (raw.length > MAX_TITLE_LENGTH) {
     throw new DiagramSourceError("Diagram title is too long.", [
@@ -95,7 +106,22 @@ export function parseTitle(raw: unknown): SafeTitle | undefined {
     findTerminalControl(character) === undefined ? character : " ",
   ).join("");
   const title = printable.replace(/\s+/gu, " ").trim();
-  return title.length === 0 ? undefined : (title as SafeTitle);
+  if (title.length === 0) {
+    throw new DiagramSourceError("Diagram title is empty.", [
+      { code: "D2_SOURCE", message: "Give the diagram a non-empty title." },
+    ]);
+  }
+  return title as SafeTitle;
+}
+
+/** Parses a digest before it becomes part of an artifact file name. */
+export function parseSourceHash(raw: unknown): SourceHash {
+  if (typeof raw === "string" && /^[a-f0-9]{64}$/u.test(raw)) {
+    return raw as SourceHash;
+  }
+  throw new DiagramSourceError("Diagram source hash is not usable.", [
+    { code: "D2_SOURCE", message: `Expected a SHA-256 digest, got ${describeUnknown(raw)}.` },
+  ]);
 }
 
 function stripByteOrderMark(raw: string): string {

@@ -1,3 +1,4 @@
+import { describeUnknown } from "../unknown.js";
 import { DiagramSourceError } from "./diagnostics.js";
 
 /**
@@ -148,7 +149,7 @@ export function parseProfile(raw: unknown): RenderProfile {
     throw new DiagramSourceError("Unsupported diagram profile.", [
       {
         code: "D2_SOURCE",
-        message: `${JSON.stringify(raw)} is not a profile.`,
+        message: `${describeUnknown(raw)} is not a profile.`,
         hint: `Use ${PROFILE_NAMES.join(", ")}.`,
       },
     ]);

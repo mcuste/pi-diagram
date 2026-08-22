@@ -3,10 +3,15 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { SourceFormatUnavailableError, TextRenderUnavailableError } from "../dist/d2/runner.js";
+import {
+  SourceFormatUnavailableError,
+  SvgRenderUnavailableError,
+  TextRenderUnavailableError,
+} from "../dist/d2/runner.js";
 import { CommandCancelledError } from "../dist/process.js";
 import { ImageRenderUnavailableError } from "../dist/raster.js";
 import { parseRepresentation, renderDiagram } from "../dist/render.js";
+import { png } from "./fixtures/png.mjs";
 
 const UNICODE_DIAGRAM = "┌────┐\n│ a  │\n└────┘";
 
@@ -70,6 +75,15 @@ test("runtime request parsing rejects unsupported fields before D2 starts", asyn
   });
   assert.deepEqual(renderer.calls, []);
 });
+
+test("prototype field names are rejected before D2 starts", async () => {
+  const renderer = createRenderer();
+  await assert.rejects(renderDiagram({ source: "a -> b", toString: true }, renderer), {
+    name: "DiagramSourceError",
+    message: /unsupported field/,
+  });
+  assert.deepEqual(renderer.calls, []);
+});
 test("the profile a call names decides how the picture is drawn", async () => {
   const renderer = createRenderer();
   const rendering = await renderDiagram(
@@ -95,6 +109,18 @@ test("a profile outside the table is refused before D2 runs", async () => {
     name: "DiagramSourceError",
     message: /is not a profile/,
   });
+  assert.deepEqual(renderer.calls, []);
+});
+
+test("malformed optional fields are refused instead of treated as absent", async () => {
+  const renderer = createRenderer();
+  for (const request of [
+    { source: "a -> b", title: null },
+    { source: "a -> b", images: "yes" },
+    { source: "a -> b", save: { dir: "docs", basename: null }, cwd: process.cwd() },
+  ]) {
+    await assert.rejects(renderDiagram(request, renderer), { name: "DiagramSourceError" });
+  }
   assert.deepEqual(renderer.calls, []);
 });
 
@@ -188,6 +214,29 @@ test("a drawing too big for a transcript is refused with advice to split it", as
     name: "DiagramSourceError",
     message: /D2_TOO_LARGE/,
   });
+});
+
+test("an oversized render never commits repository artifacts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-render-"));
+  try {
+    const tall = createRenderer({ extended: `${"┌────┐\n".repeat(400)}└────┘` });
+    await assert.rejects(
+      renderDiagram(
+        {
+          source: "a -> b",
+          title: "Flow",
+          formats: ["source"],
+          save: { dir: "docs" },
+          cwd: root,
+        },
+        tall,
+      ),
+      { name: "DiagramSourceError", message: /D2_TOO_LARGE/ },
+    );
+    await assert.rejects(readFile(join(root, "docs/flow.d2"), "utf8"), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("saving is refused before D2 runs, because a bad path costs nothing to catch", async () => {
@@ -360,7 +409,7 @@ test("source mode still writes a txt when one is asked for", async () => {
   }
 });
 
-const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+const PNG_BYTES = png();
 
 /** Stands in for resvg. Records what it was handed, and can fail the way resvg would. */
 function createRasterizer({ png = PNG_BYTES, systemFonts = false, error } = {}) {
@@ -431,6 +480,16 @@ test("a failure that is not an image problem is not swallowed", async () => {
   );
 });
 
+test("an optional SVG failure preserves a usable text diagram", async () => {
+  const rendering = await renderDiagram(
+    { source: "a -> b", images: true },
+    createRenderer({ svg: new SvgRenderUnavailableError("unsafe SVG") }),
+  );
+  assert.equal(rendering.renderedAs, "unicode");
+  assert.equal(rendering.image, undefined);
+  assert.match(rendering.notes.join("\n"), /unsafe SVG.*shown as text/s);
+});
+
 test("labels the diagram's own font cannot draw are reported", async () => {
   const rendering = await renderDiagram(
     { source: "a -> b", images: true },
@@ -438,6 +497,21 @@ test("labels the diagram's own font cannot draw are reported", async () => {
     createRasterizer({ systemFonts: true }),
   );
   assert.match(rendering.notes.join("\n"), /fonts installed on this machine/);
+});
+
+test("measured width uses terminal cells and source mode honours cancellation", async () => {
+  const wide = createRenderer({ extended: "表" });
+  assert.equal((await renderDiagram({ source: "a -> b" }, wide)).widthCells, 2);
+
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    renderDiagram(
+      { source: "a -> b", render: "source", signal: controller.signal },
+      createRenderer(),
+    ),
+    { name: "CommandCancelledError" },
+  );
 });
 
 test("a png reaches the repository only when it is asked for", async () => {

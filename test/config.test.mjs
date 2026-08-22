@@ -32,6 +32,10 @@ test("Unicode is the default render preference", async () => {
   }
 });
 
+test("an unprintable preference value still produces a configuration error", () => {
+  assert.throws(() => parseRenderPreference(1n), /1n/);
+});
+
 test("project configuration overrides global configuration", async () => {
   const paths = await fixture();
   try {

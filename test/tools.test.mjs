@@ -12,6 +12,7 @@ import {
   registerDiagramPreference,
   registerDiagramTools,
 } from "../dist/tools.js";
+import { png } from "./fixtures/png.mjs";
 
 const UNICODE_DIAGRAM = "┌────┐\n│ a  │\n└────┘";
 
@@ -248,7 +249,7 @@ test("unsafe source is refused before D2 is started", async () => {
   assert.deepEqual(renderer.calls, []);
 });
 
-const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9]);
+const PNG_BYTES = png();
 
 function createRasterizer() {
   return {

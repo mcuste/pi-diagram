@@ -10,8 +10,8 @@ import {
   textCodePoints,
 } from "./d2/fonts.js";
 import type { RenderedSvg } from "./d2/runner.js";
-import { CommandCancelledError } from "./process.js";
-import { removeTerminalControls } from "./terminal.js";
+import { CommandCancelledError, throwIfCancelled } from "./process.js";
+import { errorMessage } from "./unknown.js";
 
 /**
  * Draws a D2 SVG as a PNG. D2's own PNG export drives a headless browser it downloads on first
@@ -82,18 +82,57 @@ export function parseRenderedPng(bytes: Uint8Array, expected: RasterDimensions):
     );
   }
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (buffer.length < 24 || !buffer.subarray(0, 8).equals(PNG_SIGNATURE)) {
+  if (buffer.length < 45 || !buffer.subarray(0, 8).equals(PNG_SIGNATURE)) {
     throw new ImageRenderUnavailableError("The renderer did not return a PNG.");
   }
-  if (buffer.toString("ascii", 12, 16) !== "IHDR") {
-    throw new ImageRenderUnavailableError("The PNG does not start with an image header.");
+
+  let offset = PNG_SIGNATURE.length;
+  let chunks = 0;
+  let sawData = false;
+  let widthPx: number | undefined;
+  let heightPx: number | undefined;
+  while (offset < buffer.length) {
+    if (buffer.length - offset < 12) {
+      throw new ImageRenderUnavailableError("The PNG is truncated.");
+    }
+    const length = buffer.readUInt32BE(offset);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    const next = dataEnd + 4;
+    if (dataEnd < dataStart || next < dataEnd || next > buffer.length) {
+      throw new ImageRenderUnavailableError("The PNG contains a truncated chunk.");
+    }
+    const type = buffer.toString("ascii", offset + 4, dataStart);
+    if (!/^[A-Za-z]{4}$/u.test(type)) {
+      throw new ImageRenderUnavailableError("The PNG contains an invalid chunk type.");
+    }
+    if (buffer.readUInt32BE(dataEnd) !== crc32(buffer, offset + 4, dataEnd)) {
+      throw new ImageRenderUnavailableError("The PNG contains a corrupt chunk.");
+    }
+    if (chunks === 0) {
+      if (type !== "IHDR" || length !== 13) {
+        throw new ImageRenderUnavailableError("The PNG does not start with an image header.");
+      }
+      widthPx = buffer.readUInt32BE(dataStart);
+      heightPx = buffer.readUInt32BE(dataStart + 4);
+    } else if (type === "IHDR") {
+      throw new ImageRenderUnavailableError("The PNG contains more than one image header.");
+    }
+    if (type === "IDAT") {
+      sawData = true;
+    }
+    if (type === "IEND") {
+      if (length !== 0 || !sawData || next !== buffer.length) {
+        throw new ImageRenderUnavailableError("The PNG is incomplete.");
+      }
+      break;
+    }
+    chunks += 1;
+    offset = next;
   }
-  if (buffer.toString("ascii", buffer.length - 8, buffer.length - 4) !== "IEND") {
+  if (widthPx === undefined || heightPx === undefined || offset >= buffer.length) {
     throw new ImageRenderUnavailableError("The PNG is truncated.");
   }
-
-  const widthPx = buffer.readUInt32BE(16);
-  const heightPx = buffer.readUInt32BE(20);
   if (
     widthPx === 0 ||
     heightPx === 0 ||
@@ -109,6 +148,18 @@ export function parseRenderedPng(bytes: Uint8Array, expected: RasterDimensions):
     );
   }
   return { png: bytes as RenderedPng, widthPx, heightPx, systemFonts: false };
+}
+
+/** PNG checksums cover each chunk type and its data, never its length or CRC field. */
+function crc32(bytes: Buffer, start: number, end: number): number {
+  let crc = 0xffffffff;
+  for (let index = start; index < end; index += 1) {
+    crc ^= bytes[index] as number;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 /** Bounds the raster canvas before resvg allocates it. */
@@ -194,7 +245,7 @@ async function load(): Promise<ResvgModule> {
   } catch (error) {
     loaded = undefined;
     throw new ImageRenderUnavailableError(
-      `The SVG rasterizer could not be loaded: ${(error as Error).message}`,
+      `The SVG rasterizer could not be loaded: ${errorMessage(error)}`,
       { cause: error },
     );
   }
@@ -208,21 +259,25 @@ export class ResvgRasterizer implements SvgRasterizer {
   }
 
   async rasterize(request: RasterRequest): Promise<RasterImage> {
-    if (request.signal?.aborted === true) {
-      throw new CommandCancelledError("Drawing the diagram");
-    }
+    throwIfCancelled(request.signal, "Drawing the diagram");
 
     const key = await imageKey(request.svg);
     const stored = key === undefined ? undefined : await this.cache.read(key);
     if (stored !== undefined) {
+      let cached: RasterImage | undefined;
       try {
-        return parseCachedImage(stored);
+        cached = parseCachedImage(stored);
       } catch {
         // An entry this build cannot read is no better than a missing one.
       }
+      if (cached !== undefined) {
+        throwIfCancelled(request.signal, "Drawing the diagram");
+        return cached;
+      }
     }
 
-    const image = await draw(request.svg);
+    const image = await draw(request.svg, request.signal);
+    throwIfCancelled(request.signal, "Drawing the diagram");
     if (key !== undefined) {
       await this.cache.write(key, formatCachedImage(image));
     }
@@ -242,22 +297,25 @@ async function resvgVersion(): Promise<string | undefined> {
     try {
       const manifest = createRequire(import.meta.url).resolve("@resvg/resvg-js/package.json");
       const parsed: unknown = JSON.parse(await readFile(manifest, "utf8"));
-      const found = (parsed as { version?: unknown }).version;
-      return typeof found === "string" ? found : undefined;
+      if (typeof parsed !== "object" || parsed === null || !("version" in parsed)) {
+        return undefined;
+      }
+      return typeof parsed.version === "string" ? parsed.version : undefined;
     } catch {
       return undefined;
     }
   })();
   return installed;
 }
-
-async function draw(svg: RenderedSvg): Promise<RasterImage> {
+async function draw(svg: RenderedSvg, signal: AbortSignal | undefined): Promise<RasterImage> {
+  throwIfCancelled(signal, "Drawing the diagram");
   const { Resvg } = await load();
   const fonts = parseEmbeddedFonts(svg);
   const missing = missingCodePoints(fonts, textCodePoints(svg));
   const directory = await mkdtemp(join(tmpdir(), "pi-diagram-fonts-"));
   try {
     const fontFiles = await writeFonts(directory, fonts);
+    throwIfCancelled(signal, "Drawing the diagram");
     const font = {
       fontFiles,
       // Labels the diagram's own font cannot draw would otherwise be empty boxes.
@@ -269,6 +327,7 @@ async function draw(svg: RenderedSvg): Promise<RasterImage> {
     const dimensions = parseTargetDimensions(probe.width, probe.height);
     const drawn = new Resvg(svg, { font, fitTo: { mode: "width", value: dimensions.widthPx } });
     const image = parseRenderedPng(drawn.render().asPng(), dimensions);
+    throwIfCancelled(signal, "Drawing the diagram");
     return { ...image, systemFonts: missing.length > 0 };
   } catch (error) {
     if (error instanceof ImageRenderUnavailableError || error instanceof CommandCancelledError) {
@@ -279,12 +338,8 @@ async function draw(svg: RenderedSvg): Promise<RasterImage> {
       { cause: error },
     );
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? removeTerminalControls(error.message) : "unknown error";
 }
 
 async function writeFonts(directory: string, fonts: readonly EmbeddedFont[]): Promise<string[]> {

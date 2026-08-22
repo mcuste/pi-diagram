@@ -10,21 +10,7 @@ import {
   ResvgRasterizer,
 } from "../dist/raster.js";
 import { face } from "./fixtures/font.mjs";
-
-/** A PNG header the checks accept, with the sizes and trailer they look at. */
-function png({ width = 800, height = 600, trailer = "IEND", signature = true } = {}) {
-  const header = Buffer.alloc(24);
-  const magic = signature
-    ? Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-    : Buffer.alloc(8);
-  magic.copy(header, 0);
-  header.write("IHDR", 12, "ascii");
-  header.writeUInt32BE(width, 16);
-  header.writeUInt32BE(height, 20);
-  const end = Buffer.alloc(8);
-  end.write(trailer, 0, "ascii");
-  return Buffer.concat([header, end]);
-}
+import { png } from "./fixtures/png.mjs";
 
 /** An entry as the store holds one: the sizes it was drawn at, then the bytes. */
 function entryFor(bytes, { width = 800, height = 600, fonts = 0 } = {}) {
@@ -68,7 +54,8 @@ test("a PNG is accepted only when it really is one of the size that was asked fo
 
   for (const [bytes, expected] of [
     [png({ signature: false }), /did not return a PNG/],
-    [png({ trailer: "IDAT" }), /truncated/],
+    [png({ includeEnd: false }), /truncated/],
+    [png({ includeData: false }), /incomplete/],
     [png({ width: 0 }), /unsafe dimensions/],
     [png({ width: 900 }), /not the 800 by 600/],
     [png({ height: 700 }), /not the 800 by 600/],
@@ -83,9 +70,16 @@ test("a PNG is accepted only when it really is one of the size that was asked fo
 });
 
 test("an image header claiming something other than IHDR is refused", () => {
-  const bytes = png();
-  bytes.write("IDAT", 12, "ascii");
-  assert.throws(() => parseRenderedPng(bytes, { widthPx: 800, heightPx: 600 }), /image header/);
+  assert.throws(
+    () => parseRenderedPng(png({ headerType: "IDAT" }), { widthPx: 800, heightPx: 600 }),
+    /image header/,
+  );
+});
+
+test("a PNG with a corrupt chunk checksum is refused", () => {
+  const corrupt = png();
+  corrupt[16] ^= 1;
+  assert.throws(() => parseRenderedPng(corrupt, { widthPx: 800, heightPx: 600 }), /corrupt chunk/);
 });
 
 test("the draw width is twice the diagram, inside fixed bounds", () => {

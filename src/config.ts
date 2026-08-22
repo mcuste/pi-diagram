@@ -2,6 +2,7 @@ import type { Stats } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { describeUnknown, hasErrnoCode } from "./unknown.js";
 
 const MAX_CONFIG_BYTES = 4 * 1024;
 const CONFIG_FILE = "pi-diagram.json";
@@ -25,7 +26,7 @@ export function parseRenderPreference(value: unknown): RenderPreference {
     return "image";
   }
   throw new Error(
-    `Diagram render preference must be "unicode" or "image", not ${JSON.stringify(value)}.`,
+    `Diagram render preference must be "unicode" or "image", not ${describeUnknown(value)}.`,
   );
 }
 
@@ -48,7 +49,7 @@ async function readPreference(path: string): Promise<RenderPreference | undefine
   try {
     info = await lstat(path);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (hasErrnoCode(error, "ENOENT")) {
       return undefined;
     }
     throw error;
@@ -76,7 +77,8 @@ async function readPreference(path: string): Promise<RenderPreference | undefine
   if (keys.some((key) => key !== "render")) {
     throw new Error(`${JSON.stringify(path)} supports only the "render" setting.`);
   }
-  return parseRenderPreference(Reflect.get(parsed, "render"));
+  const render = Object.hasOwn(parsed, "render") ? Reflect.get(parsed, "render") : undefined;
+  return parseRenderPreference(render);
 }
 
 export async function resolveRenderPreference(

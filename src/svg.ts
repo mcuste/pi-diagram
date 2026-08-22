@@ -2,26 +2,26 @@ import { DOMParser, type Element, XMLSerializer } from "@xmldom/xmldom";
 
 const MAX_SVG_BYTES = 1024 * 1024;
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
-const SAFE_ELEMENTS: Readonly<Record<string, true>> = {
-  defs: true,
-  g: true,
-  marker: true,
-  mask: true,
-  path: true,
-  pattern: true,
-  polygon: true,
-  rect: true,
-  style: true,
-  svg: true,
-  text: true,
-};
-const SAFE_AT_RULES: Readonly<Record<string, true>> = { "font-face": true, media: true };
-const UNSAFE_CSS_IDENTIFIERS: Readonly<Record<string, true>> = {
-  behavior: true,
-  expression: true,
-  javascript: true,
-  "-moz-binding": true,
-};
+const SAFE_ELEMENTS: ReadonlySet<string> = new Set([
+  "defs",
+  "g",
+  "marker",
+  "mask",
+  "path",
+  "pattern",
+  "polygon",
+  "rect",
+  "style",
+  "svg",
+  "text",
+]);
+const SAFE_AT_RULES: ReadonlySet<string> = new Set(["font-face", "media"]);
+const UNSAFE_CSS_IDENTIFIERS: ReadonlySet<string> = new Set([
+  "behavior",
+  "expression",
+  "javascript",
+  "-moz-binding",
+]);
 const LOCAL_REFERENCE = /^url\(\s*#[A-Za-z_][-A-Za-z0-9_.:]*\s*\)$/iu;
 const EMBEDDED_FONT = /^data:application\/font-woff;base64,[A-Za-z0-9+/=]+$/u;
 
@@ -85,7 +85,7 @@ export function parseSafeSvg(raw: string): string {
 function parseElement(element: Element): void {
   const name = element.tagName.toLowerCase();
   if (
-    !SAFE_ELEMENTS[name] ||
+    !SAFE_ELEMENTS.has(name) ||
     (name === "svg" && element.namespaceURI !== SVG_NAMESPACE) ||
     (name !== "svg" && element.namespaceURI !== null && element.namespaceURI !== SVG_NAMESPACE)
   ) {
@@ -158,7 +158,7 @@ function parseStylesheet(css: string): void {
     }
     if (character === "@") {
       const token = readCssIdentifier(css, index + 1);
-      if (token === undefined || !SAFE_AT_RULES[token.value]) {
+      if (token === undefined || !SAFE_AT_RULES.has(token.value)) {
         throw new SvgOutputError("D2 SVG contains an unsupported CSS rule.");
       }
       index = token.next;
@@ -169,7 +169,7 @@ function parseStylesheet(css: string): void {
       index += 1;
       continue;
     }
-    if (UNSAFE_CSS_IDENTIFIERS[token.value]) {
+    if (UNSAFE_CSS_IDENTIFIERS.has(token.value)) {
       throw new SvgOutputError(`D2 SVG contains unsafe CSS identifier ${token.value}.`);
     }
     let next = token.next;

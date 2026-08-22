@@ -44,6 +44,13 @@ export class CommandCancelledError extends Error {
   }
 }
 
+/** Keeps cancellation errors consistent across subprocess and in-process work. */
+export function throwIfCancelled(signal: AbortSignal | undefined, command: string): void {
+  if (signal?.aborted === true) {
+    throw new CommandCancelledError(command);
+  }
+}
+
 export class CommandTimeoutError extends Error {
   readonly command: string;
   readonly timeoutMs: number;

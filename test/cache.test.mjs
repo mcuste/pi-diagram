@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -16,6 +16,10 @@ const PARTS = {
 async function store(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), "pi-diagram-cache-test-"));
   return { directory, cache: new FileCache({ directory, ...options }) };
+}
+
+function cachePath(directory, key) {
+  return join(directory, `${key}.cache`);
 }
 
 test("the same render asks for the same entry", () => {
@@ -74,7 +78,19 @@ test("nothing half written is left behind", async () => {
   const { directory, cache } = await store();
   try {
     await cache.write("abc", "<svg/>");
-    assert.deepEqual(await readdir(directory), ["abc.txt"]);
+    assert.deepEqual(await readdir(directory), ["abc.cache"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("pruning leaves non-cache files in its directory alone", async () => {
+  const { directory } = await store();
+  const note = join(directory, "notes.txt");
+  try {
+    await writeFile(note, "keep");
+    await new FileCache({ directory, maxBytes: 1 }).write("abc", "0123456789");
+    assert.equal(await readFile(note, "utf8"), "keep");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -90,7 +106,7 @@ test("the least recently used entries go first when the store is full", async ()
     // Set by hand, because three writes can land in the same millisecond.
     const at = async (key, agoMs) => {
       const when = new Date(Date.now() - agoMs);
-      await utimes(join(directory, `${key}.txt`), when, when);
+      await utimes(cachePath(directory, key), when, when);
     };
     await at("untouched", 30_000);
     await at("written-recently", 20_000);
@@ -100,7 +116,7 @@ test("the least recently used entries go first when the store is full", async ()
     const kept = (await readdir(directory)).sort();
     assert.deepEqual(
       kept,
-      ["read-recently.txt", "trigger.txt", "written-recently.txt"],
+      ["read-recently.cache", "trigger.cache", "written-recently.cache"],
       kept.join(" "),
     );
   } finally {
@@ -113,10 +129,10 @@ test("entries past the age limit are dropped", async () => {
   try {
     await cache.write("stale", "<svg/>");
     const old = new Date(Date.now() - 60_000);
-    await utimes(join(directory, "stale.txt"), old, old);
+    await utimes(cachePath(directory, "stale"), old, old);
 
     await cache.write("fresh", "<svg/>");
-    assert.deepEqual(await readdir(directory), ["fresh.txt"]);
+    assert.deepEqual(await readdir(directory), ["fresh.cache"]);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -127,9 +143,9 @@ test("an expired entry is never served and cannot become fresh again", async () 
   try {
     await cache.write("stale", "<svg/>");
     const old = new Date(Date.now() - 60_000);
-    await utimes(join(directory, "stale.txt"), old, old);
+    await utimes(cachePath(directory, "stale"), old, old);
     assert.equal(await cache.read("stale"), undefined);
-    await assert.rejects(stat(join(directory, "stale.txt")), { code: "ENOENT" });
+    await assert.rejects(stat(cachePath(directory, "stale")), { code: "ENOENT" });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -139,7 +155,7 @@ test("a read marks an entry as used", async () => {
   const { directory, cache } = await store();
   try {
     await cache.write("abc", "<svg/>");
-    const path = join(directory, "abc.txt");
+    const path = cachePath(directory, "abc");
     const old = new Date(Date.now() - 60_000);
     await utimes(path, old, old);
 

@@ -12,6 +12,7 @@ const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
 const SAFE_KEY = /^[A-Za-z0-9_-]{1,128}$/u;
+const ENTRY_SUFFIX = ".cache";
 
 export interface CacheKeyParts {
   readonly source: string;
@@ -127,6 +128,9 @@ export class FileCache implements RenderCache {
       const names = await readdir(this.directory);
       const entries: { path: string; bytes: number; usedAt: number }[] = [];
       for (const name of names) {
+        if (!this.isEntryName(name)) {
+          continue;
+        }
         const path = join(this.directory, name);
         const found = await lstat(path).catch(() => undefined);
         if (found === undefined || !found.isFile()) {
@@ -165,6 +169,10 @@ export class FileCache implements RenderCache {
   }
 
   private pathFor(key: string): string | undefined {
-    return SAFE_KEY.test(key) ? join(this.directory, `${key}.txt`) : undefined;
+    return SAFE_KEY.test(key) ? join(this.directory, `${key}${ENTRY_SUFFIX}`) : undefined;
+  }
+
+  private isEntryName(name: string): boolean {
+    return name.endsWith(ENTRY_SUFFIX) && SAFE_KEY.test(name.slice(0, -ENTRY_SUFFIX.length));
   }
 }

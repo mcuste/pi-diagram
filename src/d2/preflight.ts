@@ -12,31 +12,31 @@ declare const safeSourceBrand: unique symbol;
 export type SafeD2Source = NormalizedD2Source & { readonly [safeSourceBrand]: true };
 
 /** D2's documented shapes, less `image`, which loads a file or a URL. */
-const ALLOWED_SHAPES: Readonly<Record<string, true>> = {
-  rectangle: true,
-  square: true,
-  page: true,
-  parallelogram: true,
-  document: true,
-  cylinder: true,
-  queue: true,
-  package: true,
-  step: true,
-  callout: true,
-  stored_data: true,
-  person: true,
-  diamond: true,
-  oval: true,
-  circle: true,
-  hexagon: true,
-  cloud: true,
-  text: true,
-  code: true,
-  class: true,
-  sql_table: true,
-  sequence_diagram: true,
-  "c4-person": true,
-};
+const ALLOWED_SHAPES: ReadonlySet<string> = new Set([
+  "rectangle",
+  "square",
+  "page",
+  "parallelogram",
+  "document",
+  "cylinder",
+  "queue",
+  "package",
+  "step",
+  "callout",
+  "stored_data",
+  "person",
+  "diamond",
+  "oval",
+  "circle",
+  "hexagon",
+  "cloud",
+  "text",
+  "code",
+  "class",
+  "sql_table",
+  "sequence_diagram",
+  "c4-person",
+]);
 
 interface Located {
   readonly line: number;
@@ -160,7 +160,7 @@ function assetDiagnostic(key: "icon" | "link", location: Located): Diagnostic {
 function shapeDiagnostics(source: string, start: number, location: Located): readonly Diagnostic[] {
   const end = skipShapeValue(source, start);
   const value = source.slice(start, end).replace(/[{};,]+$/u, "");
-  if (ALLOWED_SHAPES[value]) {
+  if (ALLOWED_SHAPES.has(value)) {
     return [];
   }
   return [
@@ -174,7 +174,7 @@ function shapeDiagnostics(source: string, start: number, location: Located): rea
       : {
           code: "D2_UNKNOWN_SHAPE",
           message: `Unsupported shape ${JSON.stringify(value)}.`,
-          hint: `Allowed shapes: ${Object.keys(ALLOWED_SHAPES).join(", ")}.`,
+          hint: `Allowed shapes: ${[...ALLOWED_SHAPES].join(", ")}.`,
           ...location,
         },
   ];

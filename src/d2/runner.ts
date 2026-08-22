@@ -110,6 +110,17 @@ export class TextRenderUnavailableError extends Error {
   }
 }
 
+/** The text representation remains usable when an optional SVG cannot be produced. */
+export class SvgRenderUnavailableError extends Error {
+  readonly diagnostics: readonly Diagnostic[];
+
+  constructor(message: string, diagnostics: readonly Diagnostic[] = []) {
+    super(message);
+    this.name = "SvgRenderUnavailableError";
+    this.diagnostics = diagnostics;
+  }
+}
+
 /** Formatting is optional, but source syntax and cancellation are not. */
 export class SourceFormatUnavailableError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -287,7 +298,7 @@ export function parseRenderedSvg(raw: string): RenderedSvg {
     return parseSafeSvg(raw) as RenderedSvg;
   } catch (error) {
     if (error instanceof SvgOutputError) {
-      throw new TextRenderUnavailableError(error.message);
+      throw new SvgRenderUnavailableError(error.message);
     }
     throw error;
   }
@@ -324,6 +335,7 @@ export class D2Cli implements D2Renderer {
       argv: svgArguments(request.profile),
       parse: parseRenderedSvg,
       failure: "D2 could not draw this diagram as an SVG.",
+      unavailable: (message, diagnostics) => new SvgRenderUnavailableError(message, diagnostics),
     });
     return { svg: output, version };
   }
@@ -360,7 +372,7 @@ export class D2Cli implements D2Renderer {
       await this.cache.write(key, formatted);
       return formatted;
     } finally {
-      await rm(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 
@@ -371,6 +383,7 @@ export class D2Cli implements D2Renderer {
       readonly argv: readonly D2Argument[];
       readonly parse: (stdout: string) => TOutput;
       readonly failure: string;
+      readonly unavailable?: (message: string, diagnostics: readonly Diagnostic[]) => Error;
     },
   ): Promise<{ output: TOutput; version: SupportedD2Version }> {
     const version = await this.ensureVersion(signal);
@@ -402,9 +415,10 @@ export class D2Cli implements D2Renderer {
       }
       const rendered = await this.run(step.argv, directory, signal);
       if (rendered.exitCode !== 0) {
-        throw new TextRenderUnavailableError(
-          step.failure,
-          parseD2Diagnostics(rendered.stderr, "D2_RENDER", [directory]),
+        const diagnostics = parseD2Diagnostics(rendered.stderr, "D2_RENDER", [directory]);
+        throw (
+          step.unavailable?.(step.failure, diagnostics) ??
+          new TextRenderUnavailableError(step.failure, diagnostics)
         );
       }
       const output = step.parse(rendered.stdout);
@@ -412,7 +426,7 @@ export class D2Cli implements D2Renderer {
       await this.cache.write(key, rendered.stdout);
       return { output, version };
     } finally {
-      await rm(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 

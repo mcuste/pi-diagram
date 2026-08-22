@@ -28,11 +28,12 @@
 | `test/fixtures/` | Diagram fixtures, and unsafe source under `security/` |
 
 Validation is written as parsing, not checking. Each step turns loose input into a type that
-records what was proven about it: `parseDiagramRequest` produces a fully typed render request,
-`normalizeSource` produces `NormalizedD2Source`, `parseSafeSource` produces `SafeD2Source`, and
-`parseRenderedSvg` produces `RenderedSvg`. D2 accepts nothing else. Source cannot reach the
-renderer without first being parsed, because there is no type for unchecked source. Version,
-terminal text, artifact paths, and raster dimensions use the same pattern.
+records what was proven about it: `parseDiagramRequest` produces a typed request,
+`normalizeSource` produces `NormalizedD2Source` and `SourceHash`, `parseSafeSource` produces
+`SafeD2Source`, and `parseRenderedSvg` produces `RenderedSvg`. D2 accepts nothing else. Source
+cannot reach the renderer without first being parsed, because there is no type for unchecked
+source. Version, terminal text, artifact paths, raster dimensions, and image bytes use the same
+pattern.
 
 The render cache keys on the source, the binary, the D2 version, and the exact arguments D2 was
 given. The arguments carry the profile, so there is no policy version to keep by hand: change a
@@ -44,9 +45,10 @@ Rendering the same diagram twice costs 642ms then 60ms, and only the version pro
 The drawn image is kept in the same store, keyed on the SVG it came from, the installed resvg
 version, and the scale and bounds in `src/raster.ts`. It is held as base64 behind the sizes it was
 drawn at, and a hit goes back through `parseRenderedPng`, so a corrupt entry is drawn again rather
-than displayed. Nothing is stored when the resvg version cannot be read, because an image could
-then outlive the renderer that drew it. Redrawing a large diagram from the store costs 18ms instead
-of 83ms.
+than displayed. The parser checks the PNG signature, every chunk boundary and CRC, one IHDR, at
+least one IDAT, and a final IEND. Nothing is stored when the resvg version cannot be read, because
+an image could then outlive the renderer that drew it. Redrawing a large diagram from the store
+costs 18ms instead of 83ms.
 
 A profile reaches D2 as CLI flags, not as text added to the source: flags win over source config,
 and the saved `.d2` stays the model's own source, put through `d2 fmt`. The text render gets no
@@ -62,10 +64,15 @@ and draws no edges. `radial` never returns, and D2's `--timeout` does not stop i
 process timeout in `src/d2/runner.ts` does.
 
 Images take the same shape. `parseEmbeddedFonts` produces fonts whose table directory was checked,
-and `parseRenderedPng` produces bytes that really are a PNG of the size that was asked for; the
-display layer accepts nothing else. D2's own PNG export needs a headless browser that Playwright
-downloads on first use, which ADR-011 rules out, so `src/raster.ts` draws the SVG this tool
-already produced.
+and `parseRenderedPng` produces bytes from a complete PNG of the size that was asked for. The
+display layer parses those bytes again after reading the temp file. D2's own PNG export needs a
+headless browser that Playwright downloads on first use, which ADR-011 rules out, so
+`src/raster.ts` draws the SVG this tool already produced.
+
+`renderDiagram` prepares every render, fallback, measurement, and artifact payload before it
+commits any workspace file. The commit step only receives a complete prepared result. An optional
+inline-image SVG failure leaves usable text intact. Explicit SVG and PNG artifact requests still
+fail rather than writing a partial representation.
 
 The collapsed result uses a 60 by 18 cell preview. The host's expanded state is the zoom control:
 `renderResult` removes the preview width cap and permits up to 60 rows. The TUI still limits the

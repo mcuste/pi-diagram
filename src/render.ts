@@ -15,16 +15,24 @@ import {
   type D2Text,
   SourceFormatUnavailableError,
   type SupportedD2Version,
+  SvgRenderUnavailableError,
   TextRenderUnavailableError,
 } from "./d2/runner.js";
-import { type NormalizedSource, normalizeSource, parseTitle, type SafeTitle } from "./normalize.js";
+import {
+  type NormalizedSource,
+  normalizeSource,
+  parseTitle,
+  type SafeTitle,
+  type SourceHash,
+} from "./normalize.js";
+import { throwIfCancelled } from "./process.js";
 import {
   ImageRenderUnavailableError,
   type RasterImage,
   ResvgRasterizer,
   type SvgRasterizer,
 } from "./raster.js";
-import { removeTerminalControls } from "./terminal.js";
+import { describeUnknown, errorMessage } from "./unknown.js";
 
 /** D2's beta text renderer must fail rather than substitute another drawing. */
 export type Representation = "unicode" | "source";
@@ -32,18 +40,6 @@ export type Representation = "unicode" | "source";
 const MAX_LINES = 300;
 const MAX_COLUMNS = 400;
 const MAX_BYTES = 32 * 1024;
-export interface DiagramRequest {
-  readonly source: unknown;
-  readonly title?: unknown;
-  readonly profile?: unknown;
-  readonly render?: unknown;
-  readonly formats?: unknown;
-  readonly save?: unknown;
-  readonly cwd?: unknown;
-  /** Whether the host can display an image at all. Only `true` enables the raster path. */
-  readonly images?: unknown;
-  readonly signal?: AbortSignal | undefined;
-}
 
 interface ParsedDiagramRequest {
   readonly normalized: NormalizedSource;
@@ -57,17 +53,17 @@ interface ParsedDiagramRequest {
   readonly signal: AbortSignal | undefined;
 }
 
-const REQUEST_KEYS: Readonly<Record<string, true>> = {
-  source: true,
-  title: true,
-  profile: true,
-  render: true,
-  formats: true,
-  save: true,
-  cwd: true,
-  images: true,
-  signal: true,
-};
+const REQUEST_KEYS: ReadonlySet<string> = new Set([
+  "source",
+  "title",
+  "profile",
+  "render",
+  "formats",
+  "save",
+  "cwd",
+  "images",
+  "signal",
+]);
 
 interface DiagramImage {
   /** Absolute path in the temp store. */
@@ -86,7 +82,7 @@ export interface DiagramRendering {
   readonly diagnostics: readonly Diagnostic[];
   readonly image: DiagramImage | undefined;
   readonly title: SafeTitle | undefined;
-  readonly sourceHash: string;
+  readonly sourceHash: SourceHash;
   readonly lineCount: number;
   readonly widthCells: number;
   readonly d2Version: SupportedD2Version | undefined;
@@ -111,35 +107,67 @@ export function parseRepresentation(requested: unknown): Representation {
       throw new DiagramSourceError("Unsupported render mode.", [
         {
           code: "D2_SOURCE",
-          message: `${JSON.stringify(requested)} is not a render mode.`,
+          message: `${describeUnknown(requested)} is not a render mode.`,
           hint: "Use auto, image, unicode, or source.",
         },
       ]);
   }
 }
 
+function parseImages(raw: unknown): boolean {
+  if (raw === undefined) {
+    return false;
+  }
+  if (typeof raw === "boolean") {
+    return raw;
+  }
+  throw new DiagramSourceError("Diagram image setting must be a boolean.", [
+    { code: "D2_SOURCE", message: `Received ${describeUnknown(raw)}.` },
+  ]);
+}
+
+function parseSignal(raw: unknown): AbortSignal | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw instanceof AbortSignal) {
+    return raw;
+  }
+  throw new DiagramSourceError("Diagram cancellation signal is not usable.", [
+    { code: "D2_SOURCE", message: `Received ${describeUnknown(raw)}.` },
+  ]);
+}
+
 /** Converts every host-facing field before D2 starts or a path is resolved. */
-async function parseDiagramRequest(request: DiagramRequest): Promise<ParsedDiagramRequest> {
-  const unexpected = Object.keys(request).find((key) => !REQUEST_KEYS[key]);
-  if (unexpected !== undefined) {
-    throw new DiagramSourceError("Diagram request has an unsupported field.", [
-      { code: "D2_SOURCE", message: `${JSON.stringify(unexpected)} is not supported.` },
+async function parseDiagramRequest(request: unknown): Promise<ParsedDiagramRequest> {
+  if (typeof request !== "object" || request === null || Array.isArray(request)) {
+    throw new DiagramSourceError("Diagram request must be an object.", [
+      { code: "D2_SOURCE", message: `Received ${describeUnknown(request)}.` },
     ]);
   }
+  const unexpected = Object.keys(request).find((key) => !REQUEST_KEYS.has(key));
+  if (unexpected !== undefined) {
+    throw new DiagramSourceError("Diagram request has an unsupported field.", [
+      { code: "D2_SOURCE", message: `${describeUnknown(unexpected)} is not supported.` },
+    ]);
+  }
+  const read = (key: string): unknown =>
+    Object.hasOwn(request, key) ? Reflect.get(request, key) : undefined;
 
-  const normalized = normalizeSource(request.source);
+  const normalized = normalizeSource(read("source"));
   const source = parseSafeSource(normalized.text);
-  const title = parseTitle(request.title);
-  const profile = parseProfile(request.profile);
-  const representation = parseRepresentation(request.render);
-  const wantsFiles = request.save !== undefined || request.formats !== undefined;
-  const names = wantsFiles
-    ? parseArtifactNames(
-        { formats: request.formats, save: request.save },
-        { title, hash: normalized.hash },
-      )
-    : undefined;
-  const target = names === undefined ? undefined : await parseArtifactTarget(request.cwd, names);
+  const title = parseTitle(read("title"));
+  const profile = parseProfile(read("profile"));
+  const requestedRender = read("render");
+  const representation = parseRepresentation(requestedRender);
+  const save = read("save");
+  const formats = read("formats");
+  const names =
+    save !== undefined || formats !== undefined
+      ? parseArtifactNames({ formats, save }, { title, hash: normalized.hash })
+      : undefined;
+  const target = names === undefined ? undefined : await parseArtifactTarget(read("cwd"), names);
+  const images = parseImages(read("images"));
   return {
     normalized,
     source,
@@ -147,44 +175,57 @@ async function parseDiagramRequest(request: DiagramRequest): Promise<ParsedDiagr
     profile,
     representation,
     showImage:
-      request.images === true &&
-      (request.render === undefined || request.render === "auto" || request.render === "image"),
+      images &&
+      (requestedRender === undefined || requestedRender === "auto" || requestedRender === "image"),
     names,
     target,
-    signal: request.signal,
+    signal: parseSignal(read("signal")),
   };
 }
 
+interface PreparedDiagram extends Omit<DiagramRendering, "saved"> {
+  readonly contents: ReadonlyMap<ArtifactFormat, string | Uint8Array>;
+}
+
 export async function renderDiagram(
-  request: DiagramRequest,
+  request: unknown,
   renderer: D2Renderer,
   rasterizer: SvgRasterizer = new ResvgRasterizer(),
 ): Promise<DiagramRendering> {
   const parsed = await parseDiagramRequest(request);
   const { names, normalized, profile, representation, showImage, signal, source, target, title } =
     parsed;
+  throwIfCancelled(signal, "Drawing the diagram");
+
   const notes: string[] = [];
   const savesPng = names?.formats.includes("png") === true;
   const wantsText = representation !== "source" || names?.formats.includes("txt") === true;
   const drawn = wantsText ? await tryRender(renderer, source, signal) : undefined;
   const textFailure = drawn instanceof TextRenderUnavailableError ? drawn : undefined;
-  const text = drawn instanceof TextRenderUnavailableError ? undefined : drawn?.text;
+  const text =
+    drawn === undefined || drawn instanceof TextRenderUnavailableError ? undefined : drawn.text;
 
-  const svg =
-    names?.formats.includes("svg") === true || showImage || savesPng
-      ? await renderer.renderSvg({ source, profile, signal })
-      : undefined;
-
-  let raster: RasterImage | undefined;
-  if (svg !== undefined && (showImage || savesPng)) {
-    raster = await tryRasterize(rasterizer, svg.svg, signal, notes);
+  const needsSvg = names?.formats.includes("svg") === true || savesPng;
+  let svg: Awaited<ReturnType<D2Renderer["renderSvg"]>> | undefined;
+  if (needsSvg || showImage) {
+    try {
+      svg = await renderer.renderSvg({ source, profile, signal });
+    } catch (error) {
+      if (!(error instanceof SvgRenderUnavailableError) || needsSvg) {
+        throw error;
+      }
+      notes.push(`${errorMessage(error)} The diagram is shown as text instead.`);
+    }
   }
 
-  let saved: readonly WrittenArtifact[] = [];
+  const raster =
+    svg === undefined || (!showImage && !savesPng)
+      ? undefined
+      : await tryRasterize(rasterizer, svg.svg, signal, notes);
+
+  const contents = new Map<ArtifactFormat, string | Uint8Array>();
   if (target !== undefined && names !== undefined) {
-    const contents = new Map<ArtifactFormat, string | Uint8Array>([
-      ["source", await sourceToSave(renderer, source, signal)],
-    ]);
+    contents.set("source", await sourceToSave(renderer, source, signal));
     if (svg !== undefined) {
       contents.set("svg", `${svg.svg}\n`);
     }
@@ -198,22 +239,22 @@ export async function renderDiagram(
     } else if (names.formats.includes("txt")) {
       notes.push("No .txt was written, because D2 could not draw this diagram as text.");
     }
-    signal?.throwIfAborted();
-    saved = await writeArtifacts(target, contents, signal);
   }
 
   const image =
     raster === undefined || !showImage
       ? undefined
       : await keepImage(raster, title, normalized.hash, notes, signal);
+  const willWrite =
+    names !== undefined && [...names.formats].some((format) => contents.has(format));
 
-  // Work that came out fine is not discarded because the text renderer choked.
+  let prepared: PreparedDiagram;
   if (textFailure !== undefined && representation !== "source") {
-    if (saved.length === 0 && image === undefined) {
+    if (!willWrite && image === undefined) {
       throw explain(textFailure);
     }
     notes.push("The diagram is shown as source, because D2 could not draw it as text.");
-    return {
+    prepared = {
       title,
       profile: profile.name,
       sourceHash: normalized.hash,
@@ -224,29 +265,35 @@ export async function renderDiagram(
       diagnostics: textFailure.diagnostics,
       image,
       d2Version: svg?.version,
-      saved,
       notes,
+      contents,
+    };
+  } else {
+    // Text may have been drawn only to write a .txt sidecar, which must not override the request.
+    const displayText = representation === "source" || text === undefined ? source : text;
+    prepared = {
+      title,
+      profile: profile.name,
+      sourceHash: normalized.hash,
+      ...measure(displayText, MAX_COLUMNS),
+      renderedAs: representation === "source" || text === undefined ? "source" : "unicode",
+      text: displayText,
+      source,
+      diagnostics: [],
+      image,
+      d2Version:
+        drawn === undefined || drawn instanceof TextRenderUnavailableError
+          ? svg?.version
+          : drawn.version,
+      notes,
+      contents,
     };
   }
 
-  // Text may have been drawn only to write a .txt sidecar, which must not override the
-  // representation the caller asked for.
-  const showSource = representation === "source" || text === undefined;
-  return {
-    title,
-    profile: profile.name,
-    sourceHash: normalized.hash,
-    ...measure(showSource ? source : (text as string), MAX_COLUMNS),
-    renderedAs: showSource ? "source" : "unicode",
-    text: showSource ? source : (text as string),
-    source,
-    diagnostics: [],
-    image,
-    d2Version:
-      drawn instanceof TextRenderUnavailableError ? svg?.version : (drawn?.version ?? svg?.version),
-    saved,
-    notes,
-  };
+  throwIfCancelled(signal, "Writing diagram artifacts");
+  const saved = target === undefined ? [] : await writeArtifacts(target, prepared.contents, signal);
+  const { contents: _contents, ...rendering } = prepared;
+  return { ...rendering, saved };
 }
 
 /** Formats source for readable checked-in artifacts. */
@@ -255,6 +302,7 @@ async function sourceToSave(
   source: SafeD2Source,
   signal: AbortSignal | undefined,
 ): Promise<string> {
+  throwIfCancelled(signal, "Formatting the diagram source");
   let formatted: string;
   try {
     formatted = await renderer.formatSource({ source, signal });
@@ -305,7 +353,7 @@ async function tryRasterize(
 async function keepImage(
   raster: RasterImage,
   title: SafeTitle | undefined,
-  hash: string,
+  hash: SourceHash,
   notes: string[],
   signal: AbortSignal | undefined,
 ): Promise<DiagramImage | undefined> {
@@ -349,9 +397,30 @@ function explain(failure: TextRenderUnavailableError): TextRenderUnavailableErro
     failure.diagnostics,
   );
 }
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? removeTerminalControls(error.message) : "unknown error";
+/** Returns the terminal cells consumed by one line without allocating a grapheme array. */
+function lineWidthCells(line: string): number {
+  let width = 0;
+  for (const character of line) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (/\p{Mark}|\p{Cf}/u.test(character)) {
+      continue;
+    }
+    width +=
+      codePoint === 0x2329 ||
+      codePoint === 0x232a ||
+      (codePoint >= 0x1100 && codePoint <= 0x115f) ||
+      (codePoint >= 0x2e80 && codePoint <= 0xa4cf) ||
+      (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+      (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+      (codePoint >= 0xfe10 && codePoint <= 0xfe6f) ||
+      (codePoint >= 0xff00 && codePoint <= 0xff60) ||
+      (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
+      (codePoint >= 0x1f300 && codePoint <= 0x1faff) ||
+      (codePoint >= 0x20000 && codePoint <= 0x3fffd)
+        ? 2
+        : 1;
+  }
+  return width;
 }
 
 /** Throws if the drawing is too big to belong in a transcript. */
@@ -359,7 +428,7 @@ function measure(text: string, maxColumns: number): { lineCount: number; widthCe
   const lines = text.split("\n");
   let widthCells = 0;
   for (const line of lines) {
-    widthCells = Math.max(widthCells, Array.from(line).length);
+    widthCells = Math.max(widthCells, lineWidthCells(line));
   }
 
   const bytes = Buffer.byteLength(text, "utf8");

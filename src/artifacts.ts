@@ -15,7 +15,10 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DiagramSourceError } from "./d2/diagnostics.js";
+import { parseSourceHash } from "./normalize.js";
+import { throwIfCancelled } from "./process.js";
 import { describeCodePoint, findTerminalControl } from "./terminal.js";
+import { describeUnknown, errorMessage, hasErrnoCode } from "./unknown.js";
 
 /**
  * Writes diagram artifacts. Files land in a private temporary directory unless a call names a
@@ -104,7 +107,7 @@ function parseFormats(requested: unknown): readonly ArtifactFormat[] {
     if (typeof format !== "string" || !Object.hasOwn(EXTENSIONS, format)) {
       refuse(
         "Diagram save formats are not usable.",
-        `${JSON.stringify(format)} is not a format.`,
+        `${describeUnknown(format)} is not a format.`,
         `Use ${Object.keys(EXTENSIONS).join(", ")}.`,
       );
     }
@@ -112,7 +115,7 @@ function parseFormats(requested: unknown): readonly ArtifactFormat[] {
     if (formats.includes(parsed)) {
       refuse(
         "Diagram save formats are not usable.",
-        `${JSON.stringify(format)} appears more than once.`,
+        `${describeUnknown(format)} appears more than once.`,
       );
     }
     formats.push(parsed);
@@ -127,7 +130,7 @@ function parseDirectory(requested: unknown): string {
       "Saving a diagram needs a directory.",
       requested === undefined
         ? "`save.dir` was not given."
-        : `Expected a path, got ${typeof requested}.`,
+        : `Expected a non-empty path, got ${describeUnknown(requested)}.`,
       "Name the directory to write into, such as docs/diagrams.",
     );
   }
@@ -150,7 +153,7 @@ function parseDirectory(requested: unknown): string {
   if (isAbsolute(requested) || directory.startsWith("/")) {
     refuse(
       "Diagram save directory is not usable.",
-      `${JSON.stringify(requested)} is an absolute path.`,
+      `${describeUnknown(requested)} is an absolute path.`,
       "Give a path relative to the workspace, such as docs/diagrams.",
     );
   }
@@ -158,7 +161,7 @@ function parseDirectory(requested: unknown): string {
   if (segments.includes("..")) {
     refuse(
       "Diagram save directory is not usable.",
-      `${JSON.stringify(requested)} climbs out of the workspace.`,
+      `${describeUnknown(requested)} climbs out of the workspace.`,
       "Give a path inside the workspace.",
     );
   }
@@ -167,15 +170,21 @@ function parseDirectory(requested: unknown): string {
 
 function parseSave(requested: unknown): { readonly directory: string; readonly basename: unknown } {
   if (typeof requested !== "object" || requested === null || Array.isArray(requested)) {
-    refuse("Diagram save options are not usable.", `Expected an object, got ${typeof requested}.`);
+    refuse(
+      "Diagram save options are not usable.",
+      `Expected an object, got ${describeUnknown(requested)}.`,
+    );
   }
   const keys = Object.keys(requested);
   if (keys.some((key) => key !== "dir" && key !== "basename")) {
     refuse("Diagram save options are not usable.", "Only `dir` and `basename` are supported.");
   }
+  if (!Object.hasOwn(requested, "dir")) {
+    refuse("Saving a diagram needs a directory.", "`save.dir` was not given.");
+  }
   return {
     directory: parseDirectory(Reflect.get(requested, "dir")),
-    basename: Reflect.get(requested, "basename"),
+    basename: Object.hasOwn(requested, "basename") ? Reflect.get(requested, "basename") : undefined,
   };
 }
 
@@ -196,12 +205,21 @@ function slugify(value: string): string {
 function parseBasename(
   requested: unknown,
   title: string | undefined,
-  fallback: string | undefined,
+  fallback: SafeBasename | undefined,
 ): SafeBasename {
-  const chosen = typeof requested === "string" && requested.trim().length > 0 ? requested : title;
+  let chosen = title;
+  if (requested !== undefined) {
+    if (typeof requested !== "string" || requested.trim().length === 0) {
+      refuse(
+        "A saved diagram needs a usable name.",
+        `Expected a non-empty string, got ${describeUnknown(requested)}.`,
+      );
+    }
+    chosen = requested;
+  }
   if (chosen === undefined) {
     if (fallback !== undefined) {
-      return fallback as SafeBasename;
+      return fallback;
     }
     refuse(
       "A diagram saved into the repository needs a name.",
@@ -214,7 +232,7 @@ function parseBasename(
   if (basename.length === 0) {
     refuse(
       "A saved diagram needs a usable name.",
-      `${JSON.stringify(chosen)} has no letters or digits to build a file name from.`,
+      `${describeUnknown(chosen)} has no letters or digits to build a file name from.`,
     );
   }
   if (RESERVED_NAMES.has(basename)) {
@@ -226,9 +244,8 @@ function parseBasename(
 export interface ArtifactIdentity {
   readonly title: string | undefined;
   /** Hash of the normalized source, used to name a temporary file with no title. */
-  readonly hash: string;
+  readonly hash: unknown;
 }
-
 export interface ArtifactAsk {
   /** Which artifacts to produce. They land in the temp store either way. */
   readonly formats?: unknown;
@@ -242,7 +259,10 @@ export function parseArtifactNames(
   identity: ArtifactIdentity,
 ): ArtifactNames {
   const save = request.save === undefined ? undefined : parseSave(request.save);
-  const fallback = save === undefined ? `diagram-${identity.hash.slice(0, 12)}` : undefined;
+  const fallback =
+    save === undefined
+      ? (`diagram-${parseSourceHash(identity.hash).slice(0, 12)}` as SafeBasename)
+      : undefined;
   return {
     directory: save?.directory,
     basename: parseBasename(save?.basename, identity.title, fallback),
@@ -288,7 +308,7 @@ async function assertInsideWorkspace(realRoot: string, target: string): Promise<
       }
       return;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      if (!hasErrnoCode(error, "ENOENT")) {
         throw error;
       }
       const parent = dirname(probe);
@@ -308,10 +328,16 @@ let sessionStorePath: string | undefined;
  * readable by other users of a shared machine.
  */
 function sessionDirectory(): Promise<string> {
-  sessionStore ??= mkdtemp(join(tmpdir(), "pi-diagram-store-")).then((directory) => {
-    sessionStorePath = directory;
-    return directory;
-  });
+  sessionStore ??= mkdtemp(join(tmpdir(), "pi-diagram-store-")).then(
+    (directory) => {
+      sessionStorePath = directory;
+      return directory;
+    },
+    (error) => {
+      sessionStore = undefined;
+      throw error;
+    },
+  );
   return sessionStore;
 }
 
@@ -332,7 +358,7 @@ export async function parseArtifactTarget(
   if (typeof cwd !== "string" || cwd.length === 0 || !isAbsolute(cwd)) {
     refuse(
       "Diagrams cannot be saved into a repository without a workspace directory.",
-      `The host gave ${JSON.stringify(cwd)}.`,
+      `The host gave ${describeUnknown(cwd)}.`,
     );
   }
 
@@ -343,7 +369,7 @@ export async function parseArtifactTarget(
   } catch (error) {
     refuse(
       "The workspace directory cannot be read.",
-      `${root} could not be resolved: ${(error as Error).message}.`,
+      `${root} could not be resolved: ${errorMessage(error)}.`,
     );
   }
 
@@ -372,7 +398,7 @@ export async function writeArtifacts(
   contents: ReadonlyMap<ArtifactFormat, string | Uint8Array>,
   signal?: AbortSignal,
 ): Promise<readonly WrittenArtifact[]> {
-  signal?.throwIfAborted();
+  throwIfCancelled(signal, "Writing diagram artifacts");
   await mkdir(target.directory, { recursive: true });
   if (target.location === "workspace") {
     // The directory exists now, so this catches a link created between the check and the write.
@@ -380,6 +406,7 @@ export async function writeArtifacts(
   }
 
   const staged: StagedArtifact[] = [];
+  let committed = false;
   try {
     for (const format of target.names.formats) {
       const content = contents.get(format);
@@ -387,7 +414,7 @@ export async function writeArtifacts(
         continue;
       }
 
-      signal?.throwIfAborted();
+      throwIfCancelled(signal, "Writing diagram artifacts");
       const destination = join(target.directory, `${target.names.basename}${EXTENSIONS[format]}`);
       const temporary = join(target.directory, `.${target.names.basename}.${randomUUID()}.tmp`);
       const previous = await snapshotWritable(destination);
@@ -407,7 +434,7 @@ export async function writeArtifacts(
     }
 
     for (const artifact of staged) {
-      signal?.throwIfAborted();
+      throwIfCancelled(signal, "Writing diagram artifacts");
       await assertUnchanged(artifact);
       if (artifact.previous === undefined) {
         // A hard link fails when another process creates the destination. `rename` would overwrite it.
@@ -422,14 +449,21 @@ export async function writeArtifacts(
         artifact.committed = true;
       }
     }
+    committed = true;
   } catch (error) {
-    await restoreArtifacts(staged);
+    const restorationFailures = await restoreArtifacts(staged);
+    if (restorationFailures.length > 0) {
+      throw new AggregateError(
+        [error, ...restorationFailures],
+        "Artifact commit failed and rollback left recovery files beside the affected artifacts.",
+      );
+    }
     throw error;
   } finally {
     await Promise.all(
       staged.flatMap((artifact) => [
         rm(artifact.temporary, { force: true }).catch(() => undefined),
-        artifact.backup === undefined
+        artifact.backup === undefined || !committed
           ? Promise.resolve()
           : rm(artifact.backup, { force: true }).catch(() => undefined),
       ]),
@@ -437,7 +471,7 @@ export async function writeArtifacts(
   }
 
   if (target.location === "temp") {
-    await evictOldest(target.directory);
+    await evictOldest(target.directory).catch(() => undefined);
   }
   return staged.map((artifact) => ({
     format: artifact.format,
@@ -461,7 +495,7 @@ async function snapshotWritable(destination: string): Promise<Stats | undefined>
     }
     return existing;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (hasErrnoCode(error, "ENOENT")) {
       return undefined;
     }
     throw error;
@@ -488,8 +522,9 @@ async function assertUnchanged(artifact: StagedArtifact): Promise<void> {
   );
 }
 
-/** Leaves every previously existing artifact exactly where it was after a failed bundle commit. */
-async function restoreArtifacts(staged: readonly StagedArtifact[]): Promise<void> {
+/** Restores each artifact or preserves its backup for manual recovery. */
+async function restoreArtifacts(staged: readonly StagedArtifact[]): Promise<readonly Error[]> {
+  const failures: Error[] = [];
   for (const artifact of [...staged].reverse()) {
     try {
       if (artifact.committed) {
@@ -499,10 +534,15 @@ async function restoreArtifacts(staged: readonly StagedArtifact[]): Promise<void
         await rename(artifact.backup, artifact.destination);
         artifact.backup = undefined;
       }
-    } catch {
-      // Preserve the original error. A later call can repair the artifact if rollback also fails.
+    } catch (error) {
+      failures.push(
+        new Error(`Could not restore ${artifact.destination}; its backup was preserved.`, {
+          cause: error,
+        }),
+      );
     }
   }
+  return failures;
 }
 
 async function evictOldest(directory: string): Promise<void> {

@@ -36,6 +36,12 @@ test("the image shape is refused separately from an unknown shape", () => {
   assert.deepEqual(codes('p: {\n  shape: "image"\n}'), ["D2_UNKNOWN_SHAPE"]);
 });
 
+test("prototype names are not accepted as shapes", () => {
+  for (const shape of ["toString", "constructor", "__proto__"]) {
+    assert.deepEqual(codes(`p: { shape: ${shape} }`), ["D2_UNKNOWN_SHAPE"], shape);
+  }
+});
+
 test("every shape the tool supports is accepted", () => {
   const shapes = [
     "rectangle",

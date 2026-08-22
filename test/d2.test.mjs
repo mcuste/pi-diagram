@@ -341,7 +341,7 @@ test("a well formed SVG document is accepted and serialized with its SVG namespa
 
 test("output that is not a complete SVG document is refused", () => {
   for (const bad of ["", "   ", "not svg at all", "<svg><g/>", '<?xml version="1.0"?>']) {
-    assert.throws(() => parseRenderedSvg(bad), { name: "TextRenderUnavailableError" }, bad);
+    assert.throws(() => parseRenderedSvg(bad), { name: "SvgRenderUnavailableError" }, bad);
   }
 });
 
@@ -351,6 +351,7 @@ test("active or externally referenced SVG content is refused", () => {
     "<svg><foreignObject><b>hi</b></foreignObject></svg>",
     '<svg><image href="/etc/hosts"/></svg>',
     '<svg><a xlink:href="https://example.com">x</a></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg"><constructor/></svg>',
     '<svg><use href="//example.com/x"/></svg>',
     '<svg onload="alert(1)"></svg>',
     '<svg><a href="javascript:alert(1)">x</a></svg>',
@@ -358,7 +359,7 @@ test("active or externally referenced SVG content is refused", () => {
     '<svg><style>.x { fill: url("https://example.com/x") }</style></svg>',
   ];
   for (const svg of hostile) {
-    assert.throws(() => parseRenderedSvg(svg), { name: "TextRenderUnavailableError" }, svg);
+    assert.throws(() => parseRenderedSvg(svg), { name: "SvgRenderUnavailableError" }, svg);
   }
 });
 

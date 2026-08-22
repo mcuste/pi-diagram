@@ -71,6 +71,13 @@ test("a diagram with no title is named from its source, but only outside the rep
   );
 });
 
+test("a temporary artifact parses its source hash before using it as a name", () => {
+  assert.throws(
+    () => parseArtifactNames({ formats: ["txt"] }, { title: undefined, hash: "x/../../pwn" }),
+    { name: "DiagramSourceError", message: /source hash/ },
+  );
+});
+
 test("a title becomes a stable file name", () => {
   assert.equal(names({}, "Request Lifecycle!").basename, "request-lifecycle");
   assert.equal(names({}, "  API   ->   DB  ").basename, "api-db");
@@ -118,6 +125,16 @@ test("duplicate formats are refused to match the tool schema", () => {
     name: "DiagramSourceError",
     message: /more than once/,
   });
+});
+
+test("a present basename must be a non-empty string", () => {
+  for (const basename of [null, "", "   ", 7]) {
+    assert.throws(
+      () => parseArtifactNames({ save: { dir: "docs", basename } }, { title: "T", hash: HASH }),
+      { name: "DiagramSourceError" },
+      String(basename),
+    );
+  }
 });
 
 test("repository paths are previewed before anything is written", () => {

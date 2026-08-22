@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isSessionArtifactPath } from "./artifacts.js";
+import { parseRenderedPng } from "./raster.js";
 
 /**
  * Turns a diagram result into terminal components. Both the image and the text are drawn here
@@ -287,7 +288,11 @@ function read(image: DisplayImage, context: DisplayContext): string {
   if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) {
     throw new Error(`The image at ${image.path} is ${bytes.length} bytes.`);
   }
-  const encoded = bytes.toString("base64");
+  const checked = parseRenderedPng(bytes, {
+    widthPx: image.widthPx,
+    heightPx: image.heightPx,
+  });
+  const encoded = Buffer.from(checked.png).toString("base64");
   context.state.diagramImage = { path: image.path, encoded };
   return encoded;
 }

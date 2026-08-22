@@ -69,7 +69,8 @@ D2 exiting zero is not taken as proof the output is usable. Before anything is d
   diagram.
 - Terminal text rejects every control character except diagram line feeds.
 - SVG is parsed as XML. Only static D2 elements, local references, and embedded WOFF font URLs are
-  accepted. Event handlers, active elements, external URLs, and unsafe CSS rules are refused.
+  accepted. Event handlers, active elements, external URLs, unsafe CSS rules, and prototype-key
+  lookalikes are refused.
 
 ## Writing files
 
@@ -86,9 +87,9 @@ file name come from the model, so both are parsed before anything touches the di
 | --- | --- |
 | Relative paths only | An absolute `save.dir` is refused. Control characters and `..` segments are refused. |
 | No symlink redirect | The deepest existing ancestor is resolved with `realpath` and checked, *before* any directory is created, so a `docs` symlink pointing elsewhere cannot have `mkdir` build the rest of the path on the other side of it. The check runs again after `mkdir`. |
-| Bounded file names | The name is slugified from `title` or `basename`: lowercase, letters and digits only, 60 characters, no separators, and no Windows device names. |
+| Bounded file names | The name is slugified from `title` or `basename`: lowercase, letters and digits only, 60 characters, no separators, and no Windows device names. Temporary names require a parsed SHA-256 source hash. |
 | Plain files only | An existing path that is not a regular file, including a symlink, is never overwritten. |
-| Bundle commit | Every destination is checked and every file is staged before a replacement. A failed commit restores prior artifacts. |
+| Bundle commit | Every destination is checked and every file is staged before a replacement. Rendering and transcript limits finish before the commit starts. A failed replacement restores prior artifacts. If restoration fails, the backup stays beside the affected artifact and the error names that recovery state. |
 | Visible before approval | The approval prompt lists the exact paths, and any `save` field uses the `write` tier. |
 
 Saved SVG is parsed before it is written. D2's own documentation calls exported SVG web content,
@@ -106,7 +107,7 @@ ADR-011 rules out. The image is drawn locally instead, from the SVG this tool al
 | Checked input | Only a structurally parsed SVG reaches the rasterizer. |
 | Fonts from the diagram | The faces D2 embedded in the SVG are rebuilt as font files in a fresh temporary directory. Every offset and decompressed length is bounded before it is used. |
 | Bounded canvas | Both dimensions and the total area are bounded to 1600 by 2400 pixels. An impossible aspect ratio is refused before drawing. |
-| Checked output | The bytes have to be a PNG, with an image header, a complete trailer, safe dimensions, and the size that was asked for. A silently ignored option cannot reach the terminal as a broken image. |
+| Checked output | The bytes have to be a PNG with a valid signature, chunk structure and checksums, IHDR, IDAT, final IEND, safe dimensions, and the size that was asked for. The temp-store bytes are parsed again before display. A silently ignored option cannot reach the terminal as a broken image. |
 | Out of the model's context | The PNG goes to the temp store and is read back when the row is displayed. Its bytes never enter the tool result the model reads. |
 | Kept between sessions | The image is also held in the render cache, in a private directory outside the repository, and dropped after a week. |
 | Out of the repository | Only `formats: ["png"]` with `save.dir` writes one into the workspace, through the same path checks as any other artifact. |

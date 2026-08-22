@@ -59,8 +59,9 @@ test("titles collapse to one line and respect the schema limit", () => {
   assert.equal(parseTitle(`Req${String.fromCharCode(7)}uest`), "Req uest");
 });
 
-test("a title with no text at all is treated as absent", () => {
-  for (const value of [undefined, null, "", "   ", 7]) {
-    assert.equal(parseTitle(value), undefined);
+test("only an omitted title is absent", () => {
+  assert.equal(parseTitle(undefined), undefined);
+  for (const value of [null, "", "   ", 7]) {
+    assert.throws(() => parseTitle(value), { name: "DiagramSourceError" }, String(value));
   }
 });
