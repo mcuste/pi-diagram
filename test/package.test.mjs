@@ -32,8 +32,8 @@ test("host libraries stay peer dependencies so the host supplies its own copy", 
   assert.equal(manifest.peerDependenciesMeta["@earendil-works/pi-tui"].optional, true);
 });
 
-test("the only runtime dependency is the SVG rasterizer", () => {
-  assert.deepEqual(Object.keys(manifest.dependencies), ["@resvg/resvg-js"]);
+test("runtime dependencies rasterize images and parse SVG structure", () => {
+  assert.deepEqual(Object.keys(manifest.dependencies), ["@resvg/resvg-js", "@xmldom/xmldom"]);
 });
 
 test("the entry point registers the diagram tool and render preference", async () => {

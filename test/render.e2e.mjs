@@ -321,7 +321,6 @@ test("real SVG output carries no active or remote content", async () => {
       const rendering = await renderDiagram(
         {
           source: await fixture(name),
-          basename: name,
           title: name.replace(".d2", ""),
           save: { dir: "docs/diagrams" },
           cwd: root,

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { FileCache, noCache } from "../dist/cache.js";
+import { parseD2Diagnostics } from "../dist/d2/diagnostics.js";
 import { DEFAULT_PROFILE, PROFILE_NAMES, parseProfile } from "../dist/d2/profiles.js";
 import {
   D2Cli,
@@ -90,7 +91,7 @@ test("an older or unreadable version reports how to install a supported one", ()
       message: /too old.*go install github\.com\/d2lang\/d2/s,
     });
   }
-  for (const raw of ["", "not a version", "v1.2"]) {
+  for (const raw of ["", "not a version", "v1.2", "v0.8.1\u001b[31m", "v0.8.1\u009b31m"]) {
     assert.throws(() => parseD2Version(version(raw)), { name: "D2UnavailableError" });
   }
   assert.throws(() => parseD2Version(version("v0.8.1", 1)), { name: "D2UnavailableError" });
@@ -123,6 +124,15 @@ test("output that cannot be a diagram is refused", () => {
       message: /control character/,
     },
   );
+  assert.throws(() => parseRenderedText(`${UNICODE_DIAGRAM}\u009b31m`, "extended"), {
+    name: "TextRenderUnavailableError",
+    message: /control character/,
+  });
+});
+
+test("D2 diagnostics drop terminal control characters", () => {
+  const [diagnostic] = parseD2Diagnostics("input.d2:1:2: bad\u001b[31m\u009b31m", "D2_RENDER", []);
+  assert.equal(diagnostic.message, "bad[31m31m");
 });
 
 test("trailing blank space is removed so the transcript has no ragged edge", () => {
@@ -314,13 +324,19 @@ test("standard mode asks D2 for standard mode", async () => {
 
 const VALID_SVG = '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>';
 
-test("a well formed SVG document is accepted", () => {
+test("a well formed SVG document is accepted and serialized with its SVG namespace", () => {
   assert.equal(parseRenderedSvg(`  ${VALID_SVG}\n`), VALID_SVG);
-  assert.equal(parseRenderedSvg("<svg><g/></svg>"), "<svg><g/></svg>");
+  assert.equal(
+    parseRenderedSvg("<svg><g/></svg>"),
+    '<svg xmlns="http://www.w3.org/2000/svg"><g/></svg>',
+  );
   // D2 embeds fonts and injects CSS; both are expected and self-contained.
   const withAssets =
     '<svg><style>.a{}</style><path d="data:application/font-woff;base64,AA"/></svg>';
-  assert.equal(parseRenderedSvg(withAssets), withAssets);
+  assert.equal(
+    parseRenderedSvg(withAssets),
+    '<svg xmlns="http://www.w3.org/2000/svg"><style>.a{}</style><path d="data:application/font-woff;base64,AA"/></svg>',
+  );
 });
 
 test("output that is not a complete SVG document is refused", () => {
@@ -336,6 +352,10 @@ test("active or externally referenced SVG content is refused", () => {
     '<svg><image href="/etc/hosts"/></svg>',
     '<svg><a xlink:href="https://example.com">x</a></svg>',
     '<svg><use href="//example.com/x"/></svg>',
+    '<svg onload="alert(1)"></svg>',
+    '<svg><a href="javascript:alert(1)">x</a></svg>',
+    "<svg><style>@import url(https://example.com/x.css)</style></svg>",
+    '<svg><style>.x { fill: url("https://example.com/x") }</style></svg>',
   ];
   for (const svg of hostile) {
     assert.throws(() => parseRenderedSvg(svg), { name: "TextRenderUnavailableError" }, svg);

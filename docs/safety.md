@@ -35,15 +35,15 @@ diagram tool without a source check is a file-read and network-fetch tool.
 Refusals report a code, a line, a column, and what to do instead, so the model can correct the
 source in one more call rather than guessing.
 
-The check reads the source with a small scanner that understands comments and quoted strings
-before looking for anything else. That matters in both directions:
+The check lexes the source with comment and string tokens before looking for anything else. That
+matters in both directions:
 
 - `a: "user@example.com"` and `# icon: https://example.com/x.svg` are ordinary text and are
   allowed. So is `a: user@example.com`, because D2 only treats `@` as an import at the start of a
   token.
-- An unterminated quote, or a block string, means the scanner can no longer tell code from
-  content. Both are refused rather than guessed at. D2 rejects unterminated quotes as well, so
-  nothing valid is lost.
+- An unterminated quote, or a block string, means the lexer can no longer tell code from content.
+  Both are refused rather than guessed at. D2 rejects unterminated quotes as well, so nothing
+  valid is lost.
 
 ## How D2 is started
 
@@ -54,8 +54,8 @@ before looking for anything else. That matters in both directions:
 | Private working directory | A fresh temporary directory holding one file, `input.d2`, removed when the call ends. |
 | Minimal environment | Only `PATH`, so a bare command name can be found. Nothing else is passed on. |
 | Time limit | `--timeout 10` for D2, and a process limit above it in case D2 itself hangs. |
-| Output limit | The render is stopped past 512 KB, and a drawing too large for a transcript is refused. |
-| Cancellation | The host's abort signal terminates the subprocess. |
+| Output limit | The render is stopped past 1 MB, and a drawing too large for a transcript is refused. |
+| Cancellation | The host's abort signal terminates the subprocess and stops file commits. |
 | Version check | Below the supported version, the call reports how to install a supported one. No renderer is ever downloaded during a call. |
 | Fixed layout | ELK, chosen here rather than in the source. |
 | No path leak | D2 puts absolute paths in its render errors. They are stripped before anything is returned. |
@@ -67,7 +67,9 @@ D2 exiting zero is not taken as proof the output is usable. Before anything is d
 - The drawing is not blank. D2's text renderer can return an empty box instead of failing.
 - Unicode output contains box-drawing characters, so a text-only answer is not mistaken for a
   diagram.
-- Nothing but newlines can control the terminal. No escape sequence reaches the transcript.
+- Terminal text rejects every control character except diagram line feeds.
+- SVG is parsed as XML. Only static D2 elements, local references, and embedded WOFF font URLs are
+  accepted. Event handlers, active elements, external URLs, and unsafe CSS rules are refused.
 
 ## Writing files
 
@@ -82,17 +84,16 @@ file name come from the model, so both are parsed before anything touches the di
 
 | Control | What happens |
 | --- | --- |
-| Relative paths only | An absolute `save.dir` is refused. |
-| No climbing out | A `..` segment is refused, and the resolved path must sit inside the workspace root. |
+| Relative paths only | An absolute `save.dir` is refused. Control characters and `..` segments are refused. |
 | No symlink redirect | The deepest existing ancestor is resolved with `realpath` and checked, *before* any directory is created, so a `docs` symlink pointing elsewhere cannot have `mkdir` build the rest of the path on the other side of it. The check runs again after `mkdir`. |
 | Bounded file names | The name is slugified from `title` or `basename`: lowercase, letters and digits only, 60 characters, no separators, and no Windows device names. |
 | Plain files only | An existing path that is not a regular file, including a symlink, is never overwritten. |
-| Atomic writes | Each file is written to a temporary name and renamed, so a reader never sees half a diagram and a failed write leaves the previous version intact. |
-| Visible before approval | The approval prompt lists the exact paths, and the tier is `write`. |
+| Bundle commit | Every destination is checked and every file is staged before a replacement. A failed commit restores prior artifacts. |
+| Visible before approval | The approval prompt lists the exact paths, and any `save` field uses the `write` tier. |
 
-Saved SVG is checked before it is written. D2's own documentation calls exported SVG web content,
-so `<script>`, `<foreignObject>`, `<image>`, `<iframe>`, `<use>`, and any remote `href` are
-refused. Real output contains only embedded WOFF fonts, injected CSS, and namespace URIs.
+Saved SVG is parsed before it is written. D2's own documentation calls exported SVG web content,
+so active elements, event attributes, `href`, external CSS URLs, and unsafe CSS rules are refused.
+Real output contains only static SVG, embedded WOFF fonts, injected CSS, and namespace URIs.
 
 ## Drawing the image
 
@@ -102,10 +103,10 @@ ADR-011 rules out. The image is drawn locally instead, from the SVG this tool al
 | Control | What happens |
 | --- | --- |
 | No browser, no network | resvg draws the SVG in this process. Nothing is fetched or started. |
-| Checked input | Only an SVG that passed the checks above is rasterized, so `<script>`, `<image>`, and remote references are already gone. |
-| Fonts from the diagram | The faces D2 embedded in the SVG are rebuilt as font files in a fresh temporary directory and passed to the renderer. Every offset in the container is checked against its own length first. |
-| Bounded canvas | The draw width is derived from the diagram, capped at 1600 by 2400 pixels, and the resulting PNG is refused past 4 MB. |
-| Checked output | The bytes have to be a PNG, with an image header, a complete trailer, an area, and the width that was asked for. A silently ignored option cannot reach the terminal as a broken image. |
+| Checked input | Only a structurally parsed SVG reaches the rasterizer. |
+| Fonts from the diagram | The faces D2 embedded in the SVG are rebuilt as font files in a fresh temporary directory. Every offset and decompressed length is bounded before it is used. |
+| Bounded canvas | Both dimensions and the total area are bounded to 1600 by 2400 pixels. An impossible aspect ratio is refused before drawing. |
+| Checked output | The bytes have to be a PNG, with an image header, a complete trailer, safe dimensions, and the size that was asked for. A silently ignored option cannot reach the terminal as a broken image. |
 | Out of the model's context | The PNG goes to the temp store and is read back when the row is displayed. Its bytes never enter the tool result the model reads. |
 | Kept between sessions | The image is also held in the render cache, in a private directory outside the repository, and dropped after a week. |
 | Out of the repository | Only `formats: ["png"]` with `save.dir` writes one into the workspace, through the same path checks as any other artifact. |

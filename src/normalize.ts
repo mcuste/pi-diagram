@@ -1,14 +1,11 @@
 import { createHash } from "node:crypto";
 import { DiagramSourceError } from "./d2/diagnostics.js";
+import { describeCodePoint, findTerminalControl } from "./terminal.js";
 
 /** Byte-level enforcement of the schema's character limit in `tools.ts`. */
 const MAX_SOURCE_BYTES = 20 * 1024;
 const MAX_TITLE_LENGTH = 120;
 
-const TAB = 0x09;
-const LINE_FEED = 0x0a;
-const FIRST_PRINTABLE = 0x20;
-const DELETE = 0x7f;
 const BYTE_ORDER_MARK = 0xfeff;
 
 declare const normalizedSourceBrand: unique symbol;
@@ -35,23 +32,8 @@ interface FoundControl {
 }
 
 /** Characters a terminal would act on rather than print. */
-function isControl(codePoint: number): boolean {
-  if (codePoint === TAB || codePoint === LINE_FEED) {
-    return false;
-  }
-  return codePoint < FIRST_PRINTABLE || codePoint === DELETE;
-}
-
 function findControl(text: string): FoundControl | undefined {
-  let offset = 0;
-  for (const character of text) {
-    const codePoint = character.codePointAt(0) ?? 0;
-    if (isControl(codePoint)) {
-      return { offset, codePoint };
-    }
-    offset += character.length;
-  }
-  return undefined;
+  return findTerminalControl(text, true, true);
 }
 
 /** Runs before anything inspects or renders, so the scanner and D2 see the same bytes. */
@@ -71,11 +53,10 @@ export function normalizeSource(raw: unknown): NormalizedSource {
 
   const control = findControl(text);
   if (control) {
-    const label = control.codePoint.toString(16).padStart(4, "0").toUpperCase();
     throw new DiagramSourceError("Diagram source contains a control character.", [
       {
         code: "D2_SOURCE",
-        message: `U+${label} at offset ${control.offset} is not allowed in diagram source.`,
+        message: `${describeCodePoint(control.codePoint)} at offset ${control.offset} is not allowed in diagram source.`,
       },
     ]);
   }
@@ -102,16 +83,19 @@ export function parseTitle(raw: unknown): SafeTitle | undefined {
   if (typeof raw !== "string") {
     return undefined;
   }
+  if (raw.length > MAX_TITLE_LENGTH) {
+    throw new DiagramSourceError("Diagram title is too long.", [
+      {
+        code: "D2_SOURCE",
+        message: `${raw.length} characters is above the ${MAX_TITLE_LENGTH} character limit.`,
+      },
+    ]);
+  }
   const printable = Array.from(raw, (character) =>
-    isControl(character.codePointAt(0) ?? 0) ? " " : character,
+    findTerminalControl(character) === undefined ? character : " ",
   ).join("");
   const title = printable.replace(/\s+/gu, " ").trim();
-  if (title.length === 0) {
-    return undefined;
-  }
-  const capped =
-    title.length > MAX_TITLE_LENGTH ? `${title.slice(0, MAX_TITLE_LENGTH - 3)}...` : title;
-  return capped as SafeTitle;
+  return title.length === 0 ? undefined : (title as SafeTitle);
 }
 
 function stripByteOrderMark(raw: string): string {

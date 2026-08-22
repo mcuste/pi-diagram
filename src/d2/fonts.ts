@@ -134,7 +134,7 @@ function rebuild(woff: Buffer): SfntFont {
       throw new Error("WOFF tables decompress past the size limit.");
     }
     const raw = woff.subarray(offset, offset + compressed);
-    const data = compressed === original ? raw : inflateSync(raw);
+    const data = compressed === original ? raw : inflateSync(raw, { maxOutputLength: original });
     if (data.length !== original) {
       throw new Error("WOFF table does not decompress to its declared length.");
     }

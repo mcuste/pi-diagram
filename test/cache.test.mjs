@@ -122,6 +122,19 @@ test("entries past the age limit are dropped", async () => {
   }
 });
 
+test("an expired entry is never served and cannot become fresh again", async () => {
+  const { directory, cache } = await store({ maxAgeMs: 1000 });
+  try {
+    await cache.write("stale", "<svg/>");
+    const old = new Date(Date.now() - 60_000);
+    await utimes(join(directory, "stale.txt"), old, old);
+    assert.equal(await cache.read("stale"), undefined);
+    await assert.rejects(stat(join(directory, "stale.txt")), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("a read marks an entry as used", async () => {
   const { directory, cache } = await store();
   try {

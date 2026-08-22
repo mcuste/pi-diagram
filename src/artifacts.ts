@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import type { Stats } from "node:fs";
 import {
+  link,
   lstat,
   mkdir,
   mkdtemp,
@@ -13,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DiagramSourceError } from "./d2/diagnostics.js";
+import { describeCodePoint, findTerminalControl } from "./terminal.js";
 
 /**
  * Writes diagram artifacts. Files land in a private temporary directory unless a call names a
@@ -98,16 +101,21 @@ function parseFormats(requested: unknown): readonly ArtifactFormat[] {
 
   const formats: ArtifactFormat[] = [];
   for (const format of requested) {
-    if (!Object.hasOwn(EXTENSIONS, format)) {
+    if (typeof format !== "string" || !Object.hasOwn(EXTENSIONS, format)) {
       refuse(
         "Diagram save formats are not usable.",
         `${JSON.stringify(format)} is not a format.`,
         `Use ${Object.keys(EXTENSIONS).join(", ")}.`,
       );
     }
-    if (!formats.includes(format)) {
-      formats.push(format);
+    const parsed = format as ArtifactFormat;
+    if (formats.includes(parsed)) {
+      refuse(
+        "Diagram save formats are not usable.",
+        `${JSON.stringify(format)} appears more than once.`,
+      );
     }
+    formats.push(parsed);
   }
   return formats;
 }
@@ -121,6 +129,14 @@ function parseDirectory(requested: unknown): string {
         ? "`save.dir` was not given."
         : `Expected a path, got ${typeof requested}.`,
       "Name the directory to write into, such as docs/diagrams.",
+    );
+  }
+
+  const control = findTerminalControl(requested);
+  if (control !== undefined) {
+    refuse(
+      "Diagram save directory is not usable.",
+      `${describeCodePoint(control.codePoint)} at offset ${control.offset} is not allowed in a path.`,
     );
   }
 
@@ -152,6 +168,10 @@ function parseDirectory(requested: unknown): string {
 function parseSave(requested: unknown): { readonly directory: string; readonly basename: unknown } {
   if (typeof requested !== "object" || requested === null || Array.isArray(requested)) {
     refuse("Diagram save options are not usable.", `Expected an object, got ${typeof requested}.`);
+  }
+  const keys = Object.keys(requested);
+  if (keys.some((key) => key !== "dir" && key !== "basename")) {
+    refuse("Diagram save options are not usable.", "Only `dir` and `basename` are supported.");
   }
   return {
     directory: parseDirectory(Reflect.get(requested, "dir")),
@@ -281,14 +301,23 @@ async function assertInsideWorkspace(realRoot: string, target: string): Promise<
 }
 
 let sessionStore: Promise<string> | undefined;
+let sessionStorePath: string | undefined;
 
 /**
  * `mkdtemp` creates the directory owner-only, so diagrams that quote repository content are not
  * readable by other users of a shared machine.
  */
 function sessionDirectory(): Promise<string> {
-  sessionStore ??= mkdtemp(join(tmpdir(), "pi-diagram-store-"));
+  sessionStore ??= mkdtemp(join(tmpdir(), "pi-diagram-store-")).then((directory) => {
+    sessionStorePath = directory;
+    return directory;
+  });
   return sessionStore;
+}
+
+/** Result renderers may only read images this process stored in its private directory. */
+export function isSessionArtifactPath(path: string): boolean {
+  return sessionStorePath !== undefined && contains(sessionStorePath, resolve(path));
 }
 
 export async function parseArtifactTarget(
@@ -328,58 +357,100 @@ export async function parseArtifactTarget(
   };
 }
 
-/**
- * Writes each artifact through a temporary file and a rename, so a reader never sees a half
- * written diagram and a failed render leaves the previous version in place.
- */
+interface StagedArtifact {
+  readonly format: ArtifactFormat;
+  readonly destination: string;
+  readonly temporary: string;
+  readonly previous: Stats | undefined;
+  backup: string | undefined;
+  committed: boolean;
+}
+
+/** Stage every artifact before replacing files, so one bad destination cannot leave a partial set. */
 export async function writeArtifacts(
   target: ArtifactTarget,
   contents: ReadonlyMap<ArtifactFormat, string | Uint8Array>,
+  signal?: AbortSignal,
 ): Promise<readonly WrittenArtifact[]> {
+  signal?.throwIfAborted();
   await mkdir(target.directory, { recursive: true });
   if (target.location === "workspace") {
     // The directory exists now, so this catches a link created between the check and the write.
     await assertInsideWorkspace(target.root, target.directory);
   }
 
-  const written: WrittenArtifact[] = [];
-  for (const format of target.names.formats) {
-    const content = contents.get(format);
-    if (content === undefined) {
-      continue;
-    }
+  const staged: StagedArtifact[] = [];
+  try {
+    for (const format of target.names.formats) {
+      const content = contents.get(format);
+      if (content === undefined) {
+        continue;
+      }
 
-    const destination = join(target.directory, `${target.names.basename}${EXTENSIONS[format]}`);
-    await assertWritable(destination);
-    const temporary = join(target.directory, `.${target.names.basename}.${randomUUID()}.tmp`);
-    try {
+      signal?.throwIfAborted();
+      const destination = join(target.directory, `${target.names.basename}${EXTENSIONS[format]}`);
+      const temporary = join(target.directory, `.${target.names.basename}.${randomUUID()}.tmp`);
+      const previous = await snapshotWritable(destination);
       await writeFile(temporary, content, {
         ...(typeof content === "string" ? { encoding: "utf8" as const } : {}),
+        flag: "wx",
         mode: 0o644,
       });
-      await rename(temporary, destination);
-    } catch (error) {
-      await rm(temporary, { force: true });
-      throw error;
+      staged.push({
+        format,
+        destination,
+        temporary,
+        previous,
+        backup: undefined,
+        committed: false,
+      });
     }
-    written.push({
-      format,
-      location: target.location,
-      path:
-        target.location === "workspace"
-          ? relative(target.root, destination).split(sep).join("/")
-          : destination,
-    });
+
+    for (const artifact of staged) {
+      signal?.throwIfAborted();
+      await assertUnchanged(artifact);
+      if (artifact.previous === undefined) {
+        // A hard link fails when another process creates the destination. `rename` would overwrite it.
+        await link(artifact.temporary, artifact.destination);
+        artifact.committed = true;
+        await rm(artifact.temporary);
+      } else {
+        const backup = `${artifact.destination}.${randomUUID()}.bak`;
+        await rename(artifact.destination, backup);
+        artifact.backup = backup;
+        await rename(artifact.temporary, artifact.destination);
+        artifact.committed = true;
+      }
+    }
+  } catch (error) {
+    await restoreArtifacts(staged);
+    throw error;
+  } finally {
+    await Promise.all(
+      staged.flatMap((artifact) => [
+        rm(artifact.temporary, { force: true }).catch(() => undefined),
+        artifact.backup === undefined
+          ? Promise.resolve()
+          : rm(artifact.backup, { force: true }).catch(() => undefined),
+      ]),
+    );
   }
 
   if (target.location === "temp") {
     await evictOldest(target.directory);
   }
-  return written;
+  return staged.map((artifact) => ({
+    format: artifact.format,
+    location: target.location,
+    path:
+      target.location === "workspace"
+        ? relative(target.root, artifact.destination).split(sep).join("/")
+        : artifact.destination,
+  }));
 }
 
-/** Regenerating a diagram replaces its own files, but never anything that is not a plain file. */
-async function assertWritable(destination: string): Promise<void> {
+/** Regenerating a diagram replaces its own files, but never a symlink or another file type. */
+async function snapshotWritable(destination: string): Promise<Stats | undefined> {
   try {
     const existing = await lstat(destination);
     if (!existing.isFile()) {
@@ -388,9 +459,48 @@ async function assertWritable(destination: string): Promise<void> {
         `${destination} already exists and is not a regular file.`,
       );
     }
+    return existing;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+/** A path that changed after staging no longer belongs to this operation. */
+async function assertUnchanged(artifact: StagedArtifact): Promise<void> {
+  const current = await snapshotWritable(artifact.destination);
+  if (artifact.previous === undefined && current === undefined) {
+    return;
+  }
+  if (
+    artifact.previous !== undefined &&
+    current !== undefined &&
+    artifact.previous.dev === current.dev &&
+    artifact.previous.ino === current.ino
+  ) {
+    return;
+  }
+  refuse(
+    "That diagram path changed while artifacts were being prepared.",
+    `${artifact.destination} no longer matches the file this operation inspected.`,
+  );
+}
+
+/** Leaves every previously existing artifact exactly where it was after a failed bundle commit. */
+async function restoreArtifacts(staged: readonly StagedArtifact[]): Promise<void> {
+  for (const artifact of [...staged].reverse()) {
+    try {
+      if (artifact.committed) {
+        await rm(artifact.destination, { force: true });
+      }
+      if (artifact.backup !== undefined) {
+        await rename(artifact.backup, artifact.destination);
+        artifact.backup = undefined;
+      }
+    } catch {
+      // Preserve the original error. A later call can repair the artifact if rollback also fails.
     }
   }
 }

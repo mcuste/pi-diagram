@@ -26,6 +26,7 @@ import {
 } from "./display.js";
 import { ResvgRasterizer, type SvgRasterizer } from "./raster.js";
 import { type DiagramRendering, type Representation, renderDiagram } from "./render.js";
+import { removeTerminalControls } from "./terminal.js";
 
 /**
  * Capped well below what D2 can parse: a diagram that reads clearly in a terminal is a few dozen
@@ -314,16 +315,19 @@ export interface DiagramExtensionDependencies {
   readonly renderPreference?: (cwd: string) => RenderPreference | Promise<RenderPreference>;
 }
 
-/** Only `save` reaches the repository. The temp store changes nothing worth approving. */
+/** Only `save` reaches the repository. Its presence is write intent even when malformed. */
 function approvalFor(args: unknown): ToolApprovalDecision {
-  return readSave(args) === undefined ? "read" : "write";
+  return hasSave(args) ? "write" : "read";
 }
 
 /** Names the repository files at stake, so approving is a decision about specific paths. */
 function approvalDetails(args: unknown): readonly string[] | undefined {
+  if (!hasSave(args)) {
+    return undefined;
+  }
   const save = readSave(args);
   if (save === undefined) {
-    return undefined;
+    return ["Writes diagram artifacts into the repository"];
   }
   const read = (key: string): unknown =>
     typeof args === "object" && args !== null ? Reflect.get(args, key) : undefined;
@@ -335,9 +339,8 @@ function approvalDetails(args: unknown): readonly string[] | undefined {
     );
     return workspacePaths(names).map((path) => `Writes ${path}`);
   } catch {
-    // The call itself will refuse with the reason; the prompt only needs the intent.
     return typeof save.dir === "string"
-      ? [`Writes diagram artifacts into ${save.dir}`]
+      ? [`Writes diagram artifacts into ${removeTerminalControls(save.dir)}`]
       : ["Writes diagram artifacts into the repository"];
   }
 }
@@ -352,14 +355,20 @@ function readSave(args: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function hasSave(args: unknown): boolean {
+  return typeof args === "object" && args !== null && Object.hasOwn(args, "save");
+}
+
 /** The waiting row names the diagram and the policy, never the source. */
 function callView(args: Partial<DiagramParameters>): DiagramCallView {
-  const title = typeof args.title === "string" ? args.title.trim() : "";
+  const title = typeof args.title === "string" ? removeTerminalControls(args.title).trim() : "";
   const source = typeof args.source === "string" ? args.source : "";
   const lines = source.split("\n").filter((line) => line.trim().length > 0).length;
   const directory = readSave(args)?.dir;
-  const saving = typeof directory === "string" ? `, saving into ${directory}` : "";
-  const profile = typeof args.profile === "string" ? args.profile : DEFAULT_PROFILE.name;
+  const saving =
+    typeof directory === "string" ? `, saving into ${removeTerminalControls(directory)}` : "";
+  const profile =
+    typeof args.profile === "string" ? removeTerminalControls(args.profile) : DEFAULT_PROFILE.name;
   return {
     subject: title === "" ? `${lines} line${lines === 1 ? "" : "s"}` : `"${title}"`,
     note: `(${profile}${saving})`,

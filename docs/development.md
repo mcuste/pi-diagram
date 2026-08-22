@@ -11,11 +11,13 @@
 | `src/config.ts` | Persistent render preference paths and precedence |
 | `src/raster.ts` | Drawing the SVG as a PNG, and the checks on what comes back |
 | `src/display.ts` | Building the terminal components, including the inline image |
+| `src/terminal.ts` | Control-character parsing for text that reaches a terminal |
+| `src/svg.ts` | Structural SVG and stylesheet parsing before rasterizing or saving |
 | `src/d2/fonts.ts` | Recovering the fonts D2 embeds in its SVG, and what they can draw |
 | `src/normalize.ts` | Source normalization and title parsing |
-| `src/artifacts.ts` | The temp store, workspace path safety, and atomic writes |
+| `src/artifacts.ts` | The temp store, workspace path safety, and atomic bundle writes |
 | `src/cache.ts` | The render cache: its key, and the bounded store on disk |
-| `src/d2/preflight.ts` | The safe-subset scanner |
+| `src/d2/preflight.ts` | The safe-subset lexer |
 | `src/d2/profiles.ts` | What each profile does to a picture: engine, theme, and spacing |
 | `src/d2/runner.ts` | D2 discovery, version check, and the isolated render |
 | `src/d2/diagnostics.ts` | The diagnostic vocabulary and parsing of D2's errors |
@@ -26,10 +28,11 @@
 | `test/fixtures/` | Diagram fixtures, and unsafe source under `security/` |
 
 Validation is written as parsing, not checking. Each step turns loose input into a type that
-records what was proven about it: `normalizeSource` produces `NormalizedD2Source`,
-`parseSafeSource` produces `SafeD2Source`, and `D2Cli.renderText` accepts nothing else. Source
-cannot reach the renderer without having been checked, because there is no type for it to arrive
-as. `parseD2Version`, `parseRenderedText`, and `parseBinaryName` work the same way.
+records what was proven about it: `parseDiagramRequest` produces a fully typed render request,
+`normalizeSource` produces `NormalizedD2Source`, `parseSafeSource` produces `SafeD2Source`, and
+`parseRenderedSvg` produces `RenderedSvg`. D2 accepts nothing else. Source cannot reach the
+renderer without first being parsed, because there is no type for unchecked source. Version,
+terminal text, artifact paths, and raster dimensions use the same pattern.
 
 The render cache keys on the source, the binary, the D2 version, and the exact arguments D2 was
 given. The arguments carry the profile, so there is no policy version to keep by hand: change a

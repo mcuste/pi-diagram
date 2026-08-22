@@ -54,25 +54,27 @@ async function readPreference(path: string): Promise<RenderPreference | undefine
     throw error;
   }
   if (!info.isFile() || info.size > MAX_CONFIG_BYTES) {
-    throw new Error(`${path} must be a regular file no larger than ${MAX_CONFIG_BYTES} bytes.`);
+    throw new Error(
+      `${JSON.stringify(path)} must be a regular file no larger than ${MAX_CONFIG_BYTES} bytes.`,
+    );
   }
 
   const raw = await readFile(path, "utf8");
   if (Buffer.byteLength(raw) > MAX_CONFIG_BYTES) {
-    throw new Error(`${path} is larger than ${MAX_CONFIG_BYTES} bytes.`);
+    throw new Error(`${JSON.stringify(path)} is larger than ${MAX_CONFIG_BYTES} bytes.`);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new Error(`${path} is not valid JSON.`, { cause: error });
+    throw new Error(`${JSON.stringify(path)} is not valid JSON.`, { cause: error });
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`${path} must contain a JSON object.`);
+    throw new Error(`${JSON.stringify(path)} must contain a JSON object.`);
   }
   const keys = Object.keys(parsed);
   if (keys.some((key) => key !== "render")) {
-    throw new Error(`${path} supports only the "render" setting.`);
+    throw new Error(`${JSON.stringify(path)} supports only the "render" setting.`);
   }
   return parseRenderPreference(Reflect.get(parsed, "render"));
 }
@@ -90,9 +92,11 @@ export async function resolveRenderPreference(
   const host = options.host ?? detectedHost(options.entry);
   const cwd = options.cwd ?? process.cwd();
   const agentDir = options.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? defaultAgentDir(host);
-  const globalPreference = await readPreference(join(agentDir, CONFIG_FILE));
   const projectPreference = await readPreference(
     join(cwd, host === "omp" ? ".omp" : ".pi", CONFIG_FILE),
   );
-  return parseRenderPreference(projectPreference ?? globalPreference);
+  if (projectPreference !== undefined) {
+    return projectPreference;
+  }
+  return parseRenderPreference(await readPreference(join(agentDir, CONFIG_FILE)));
 }

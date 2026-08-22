@@ -5,6 +5,7 @@ import {
   ImageRenderUnavailableError,
   parseCachedImage,
   parseRenderedPng,
+  parseTargetDimensions,
   parseTargetWidth,
   ResvgRasterizer,
 } from "../dist/raster.js";
@@ -59,18 +60,22 @@ function svgWith(faces, text = "api") {
 }
 
 test("a PNG is accepted only when it really is one of the size that was asked for", () => {
-  assert.equal(parseRenderedPng(png({ width: 800 }), 800).widthPx, 800);
-  assert.equal(parseRenderedPng(png({ width: 801 }), 800).heightPx, 600);
+  assert.equal(parseRenderedPng(png({ width: 800 }), { widthPx: 800, heightPx: 600 }).widthPx, 800);
+  assert.equal(
+    parseRenderedPng(png({ width: 801 }), { widthPx: 800, heightPx: 600 }).heightPx,
+    600,
+  );
 
   for (const [bytes, expected] of [
     [png({ signature: false }), /did not return a PNG/],
     [png({ trailer: "IDAT" }), /truncated/],
-    [png({ width: 0 }), /no area/],
-    [png({ width: 900 }), /not the 800/],
+    [png({ width: 0 }), /unsafe dimensions/],
+    [png({ width: 900 }), /not the 800 by 600/],
+    [png({ height: 700 }), /not the 800 by 600/],
     [Buffer.alloc(10), /did not return a PNG/],
   ]) {
     assert.throws(
-      () => parseRenderedPng(bytes, 800),
+      () => parseRenderedPng(bytes, { widthPx: 800, heightPx: 600 }),
       ImageRenderUnavailableError,
       String(expected),
     );
@@ -80,7 +85,7 @@ test("a PNG is accepted only when it really is one of the size that was asked fo
 test("an image header claiming something other than IHDR is refused", () => {
   const bytes = png();
   bytes.write("IDAT", 12, "ascii");
-  assert.throws(() => parseRenderedPng(bytes, 800), /image header/);
+  assert.throws(() => parseRenderedPng(bytes, { widthPx: 800, heightPx: 600 }), /image header/);
 });
 
 test("the draw width is twice the diagram, inside fixed bounds", () => {
@@ -90,6 +95,7 @@ test("the draw width is twice the diagram, inside fixed bounds", () => {
   assert.equal(parseTargetWidth(400, 4800), 200);
   // A tiny diagram is still drawn big enough to read.
   assert.equal(parseTargetWidth(100, 80), 480);
+  assert.throws(() => parseTargetDimensions(1, 1_000_000_000), ImageRenderUnavailableError);
 });
 
 test("a canvas with no area is refused rather than drawn", () => {
@@ -182,8 +188,8 @@ test("a stored image that disagrees with its own header is refused", () => {
     [png().toString("base64"), /how it was drawn/],
     [entryFor(png(), { width: 0 }), /how it was drawn/],
     [entryFor(png(), { fonts: 2 }), /how it was drawn/],
-    [entryFor(png({ width: 900 })), /not the 800/],
-    [entryFor(png({ height: 601 })), /601 pixels tall/],
+    [entryFor(png({ width: 900 })), /not the 800 by 600/],
+    [entryFor(png({ height: 601 })), /not the 800 by 600/],
     [entryFor(Buffer.alloc(10)), /did not return a PNG/],
   ]) {
     assert.throws(() => parseCachedImage(entry), {

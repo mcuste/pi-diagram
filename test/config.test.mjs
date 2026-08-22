@@ -58,6 +58,20 @@ test("project configuration overrides global configuration", async () => {
   }
 });
 
+test("a valid project preference does not read an invalid shadowed global file", async () => {
+  const paths = await fixture();
+  try {
+    await writeJson(join(paths.agentDir, "pi-diagram.json"), { render: "ascii" });
+    await writeJson(join(paths.cwd, ".pi", "pi-diagram.json"), { render: "image" });
+    assert.equal(
+      await resolveRenderPreference({ ...paths, host: "pi", envPreference: undefined }),
+      "image",
+    );
+  } finally {
+    await rm(paths.root, { recursive: true, force: true });
+  }
+});
+
 test("Pi and OMP use their own project configuration directories", async () => {
   const paths = await fixture();
   try {

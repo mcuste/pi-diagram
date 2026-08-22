@@ -113,8 +113,11 @@ test("unknown or empty format lists are refused", () => {
   }
 });
 
-test("duplicate formats collapse and order is kept", () => {
-  assert.deepEqual(names({ formats: ["svg", "source", "svg"] }).formats, ["svg", "source"]);
+test("duplicate formats are refused to match the tool schema", () => {
+  assert.throws(() => names({ formats: ["svg", "source", "svg"] }), {
+    name: "DiagramSourceError",
+    message: /more than once/,
+  });
 });
 
 test("repository paths are previewed before anything is written", () => {
@@ -133,6 +136,13 @@ test("a directory outside the workspace is refused", () => {
   for (const dir of ["../etc", "docs/../../etc", "/etc", "/"]) {
     assert.throws(() => names({ dir }), { name: "DiagramSourceError" }, dir);
   }
+});
+
+test("control characters cannot enter an artifact path", () => {
+  assert.throws(() => names({ dir: "docs\u001b[31m" }), {
+    name: "DiagramSourceError",
+    message: /U\+001B/,
+  });
 });
 
 test("the temp store is bounded so a long session cannot fill it", async () => {
@@ -208,6 +218,18 @@ test("regenerating a diagram replaces its own files and leaves no temporary behi
 
   assert.equal(await readFile(join(root, "docs/diagrams/request-path.d2"), "utf8"), "a -> c");
   assert.deepEqual(await readdir(join(root, "docs/diagrams")), ["request-path.d2"]);
+});
+
+test("an invalid destination leaves every artifact unchanged", async () => {
+  const root = await workspace();
+  const directory = join(root, "docs/diagrams");
+  await mkdir(join(directory, "request-path.svg"), { recursive: true });
+  await writeFile(join(directory, "request-path.d2"), "old\n");
+
+  await assert.rejects(save(root, { source: "new\n", svg: "<svg/>" }), {
+    name: "DiagramSourceError",
+  });
+  assert.equal(await readFile(join(directory, "request-path.d2"), "utf8"), "old\n");
 });
 
 test("a symlinked directory cannot redirect a write out of the workspace", async () => {

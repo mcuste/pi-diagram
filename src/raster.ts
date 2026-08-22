@@ -11,6 +11,7 @@ import {
 } from "./d2/fonts.js";
 import type { RenderedSvg } from "./d2/runner.js";
 import { CommandCancelledError } from "./process.js";
+import { removeTerminalControls } from "./terminal.js";
 
 /**
  * Draws a D2 SVG as a PNG. D2's own PNG export drives a headless browser it downloads on first
@@ -23,6 +24,7 @@ const MIN_WIDTH_PX = 480;
 const MAX_WIDTH_PX = 1600;
 const MAX_HEIGHT_PX = 2400;
 const MAX_PNG_BYTES = 4 * 1024 * 1024;
+const MAX_PIXELS = MAX_WIDTH_PX * MAX_HEIGHT_PX;
 const DEFAULT_FONT_FAMILY = "Source Sans Pro";
 
 /** Everything besides the SVG and resvg itself that decides the picture. */
@@ -67,8 +69,13 @@ export class ImageRenderUnavailableError extends Error {
   }
 }
 
+export interface RasterDimensions {
+  readonly widthPx: number;
+  readonly heightPx: number;
+}
+
 /** resvg reporting success is not proof the bytes are a usable PNG of the size asked for. */
-export function parseRenderedPng(bytes: Uint8Array, expectedWidthPx: number): RasterImage {
+export function parseRenderedPng(bytes: Uint8Array, expected: RasterDimensions): RasterImage {
   if (bytes.length > MAX_PNG_BYTES) {
     throw new ImageRenderUnavailableError(
       `The image is ${bytes.length} bytes, past the ${MAX_PNG_BYTES} byte limit.`,
@@ -87,20 +94,28 @@ export function parseRenderedPng(bytes: Uint8Array, expectedWidthPx: number): Ra
 
   const widthPx = buffer.readUInt32BE(16);
   const heightPx = buffer.readUInt32BE(20);
-  if (widthPx === 0 || heightPx === 0) {
-    throw new ImageRenderUnavailableError("The PNG has no area.");
+  if (
+    widthPx === 0 ||
+    heightPx === 0 ||
+    widthPx > MAX_WIDTH_PX ||
+    heightPx > MAX_HEIGHT_PX ||
+    widthPx * heightPx > MAX_PIXELS
+  ) {
+    throw new ImageRenderUnavailableError("The PNG has unsafe dimensions.");
   }
-  // A silently ignored size option would otherwise reach the terminal as an unreadable image.
-  if (Math.abs(widthPx - expectedWidthPx) > 1) {
+  if (Math.abs(widthPx - expected.widthPx) > 1 || Math.abs(heightPx - expected.heightPx) > 1) {
     throw new ImageRenderUnavailableError(
-      `The PNG is ${widthPx} pixels wide, not the ${expectedWidthPx} that were asked for.`,
+      `The PNG is ${widthPx} by ${heightPx} pixels, not the ${expected.widthPx} by ${expected.heightPx} that were asked for.`,
     );
   }
   return { png: bytes as RenderedPng, widthPx, heightPx, systemFonts: false };
 }
 
-/** Enough resolution to scale down cleanly, never a pathological canvas. */
-export function parseTargetWidth(naturalWidthPx: number, naturalHeightPx: number): number {
+/** Bounds the raster canvas before resvg allocates it. */
+export function parseTargetDimensions(
+  naturalWidthPx: number,
+  naturalHeightPx: number,
+): RasterDimensions {
   if (
     !Number.isFinite(naturalWidthPx) ||
     !Number.isFinite(naturalHeightPx) ||
@@ -112,10 +127,28 @@ export function parseTargetWidth(naturalWidthPx: number, naturalHeightPx: number
     );
   }
 
-  // The limits come last, so a tall diagram is drawn smaller rather than past the canvas bound.
-  const byHeight = (MAX_HEIGHT_PX / naturalHeightPx) * naturalWidthPx;
-  const wanted = Math.max(naturalWidthPx * SCALE, MIN_WIDTH_PX);
-  return Math.max(1, Math.round(Math.min(wanted, MAX_WIDTH_PX, byHeight)));
+  const maximumScale = Math.min(MAX_WIDTH_PX / naturalWidthPx, MAX_HEIGHT_PX / naturalHeightPx);
+  const scale = Math.min(maximumScale, Math.max(SCALE, MIN_WIDTH_PX / naturalWidthPx));
+  const widthPx = Math.floor(naturalWidthPx * scale);
+  const heightPx = Math.floor(naturalHeightPx * scale);
+  if (
+    !Number.isSafeInteger(widthPx) ||
+    !Number.isSafeInteger(heightPx) ||
+    widthPx < 1 ||
+    heightPx < 1 ||
+    widthPx > MAX_WIDTH_PX ||
+    heightPx > MAX_HEIGHT_PX ||
+    widthPx * heightPx > MAX_PIXELS
+  ) {
+    throw new ImageRenderUnavailableError(
+      `The SVG aspect ratio cannot fit within ${MAX_WIDTH_PX} by ${MAX_HEIGHT_PX} pixels.`,
+    );
+  }
+  return { widthPx, heightPx };
+}
+
+export function parseTargetWidth(naturalWidthPx: number, naturalHeightPx: number): number {
+  return parseTargetDimensions(naturalWidthPx, naturalHeightPx).widthPx;
 }
 
 /** The store holds text, so an image travels as base64 behind the sizes it was drawn at. */
@@ -136,10 +169,13 @@ export function parseCachedImage(entry: string): RasterImage {
     throw new ImageRenderUnavailableError("The stored image does not say how it was drawn.");
   }
 
-  const image = parseRenderedPng(Buffer.from(entry.slice(split + 1), "base64"), widthPx);
-  if (image.heightPx !== heightPx) {
+  const image = parseRenderedPng(Buffer.from(entry.slice(split + 1), "base64"), {
+    widthPx,
+    heightPx,
+  });
+  if (image.widthPx !== widthPx || image.heightPx !== heightPx) {
     throw new ImageRenderUnavailableError(
-      `The stored image is ${image.heightPx} pixels tall, not the ${heightPx} it was drawn at.`,
+      `The stored image is ${image.widthPx} by ${image.heightPx} pixels, not the ${widthPx} by ${heightPx} it was drawn at.`,
     );
   }
   return { ...image, systemFonts: fonts === "1" };
@@ -230,21 +266,25 @@ async function draw(svg: RenderedSvg): Promise<RasterImage> {
     };
 
     const probe = new Resvg(svg, { font });
-    const widthPx = parseTargetWidth(probe.width, probe.height);
-    const drawn = new Resvg(svg, { font, fitTo: { mode: "width", value: widthPx } });
-    const image = parseRenderedPng(drawn.render().asPng(), widthPx);
+    const dimensions = parseTargetDimensions(probe.width, probe.height);
+    const drawn = new Resvg(svg, { font, fitTo: { mode: "width", value: dimensions.widthPx } });
+    const image = parseRenderedPng(drawn.render().asPng(), dimensions);
     return { ...image, systemFonts: missing.length > 0 };
   } catch (error) {
     if (error instanceof ImageRenderUnavailableError || error instanceof CommandCancelledError) {
       throw error;
     }
     throw new ImageRenderUnavailableError(
-      `The SVG could not be drawn as an image: ${(error as Error).message}`,
+      `The SVG could not be drawn as an image: ${errorMessage(error)}`,
       { cause: error },
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? removeTerminalControls(error.message) : "unknown error";
 }
 
 async function writeFonts(directory: string, fonts: readonly EmbeddedFont[]): Promise<string[]> {

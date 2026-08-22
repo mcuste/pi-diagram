@@ -33,6 +33,10 @@ test("control characters are refused, but tabs and newlines are kept", () => {
     name: "DiagramSourceError",
     message: /U\+001B/,
   });
+  assert.throws(() => normalizeSource(`a -> b${String.fromCharCode(0x9b)}31m`), {
+    name: "DiagramSourceError",
+    message: /U\+009B/,
+  });
   assert.equal(normalizeSource("a: {\n\tshape: circle\n}").text, "a: {\n\tshape: circle\n}");
 });
 
@@ -49,9 +53,9 @@ test("the hash follows the normalized text, not the raw input", () => {
   assert.match(viaLf.hash, /^[0-9a-f]{64}$/);
 });
 
-test("titles collapse to one line and stay bounded", () => {
+test("titles collapse to one line and respect the schema limit", () => {
   assert.equal(parseTitle("  Request   path\nlifecycle "), "Request path lifecycle");
-  assert.equal(parseTitle("x".repeat(200)).length, 120);
+  assert.throws(() => parseTitle("x".repeat(121)), { name: "DiagramSourceError" });
   assert.equal(parseTitle(`Req${String.fromCharCode(7)}uest`), "Req uest");
 });
 

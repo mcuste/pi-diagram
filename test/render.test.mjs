@@ -3,7 +3,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { TextRenderUnavailableError } from "../dist/d2/runner.js";
+import { SourceFormatUnavailableError, TextRenderUnavailableError } from "../dist/d2/runner.js";
+import { CommandCancelledError } from "../dist/process.js";
 import { ImageRenderUnavailableError } from "../dist/raster.js";
 import { parseRepresentation, renderDiagram } from "../dist/render.js";
 
@@ -61,6 +62,14 @@ test("a render mode outside the schema is refused rather than guessed at", () =>
   }
 });
 
+test("runtime request parsing rejects unsupported fields before D2 starts", async () => {
+  const renderer = createRenderer();
+  await assert.rejects(renderDiagram({ source: "a -> b", layout: "elk" }, renderer), {
+    name: "DiagramSourceError",
+    message: /unsupported field/,
+  });
+  assert.deepEqual(renderer.calls, []);
+});
 test("the profile a call names decides how the picture is drawn", async () => {
   const renderer = createRenderer();
   const rendering = await renderDiagram(
@@ -253,15 +262,46 @@ test("a saved .d2 holds what d2 fmt wrote, not what the model typed", async () =
   }
 });
 
-test("a source D2 will not format is saved the way the model wrote it", async () => {
+test("a source formatter that is unavailable saves the safe source", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-diagram-render-"));
   try {
-    const renderer = createRenderer({ formatted: new Error("fmt is unavailable") });
+    const renderer = createRenderer({
+      formatted: new SourceFormatUnavailableError("fmt is unavailable"),
+    });
     await renderDiagram(
       { source: "a->b", title: "Flow", formats: ["source"], save: { dir: "docs" }, cwd: root },
       renderer,
     );
     assert.equal(await readFile(join(root, "docs/flow.d2"), "utf8"), "a->b\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cancellation during formatting does not write the repository fallback", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-render-"));
+  try {
+    const controller = new AbortController();
+    const renderer = createRenderer();
+    renderer.formatSource = () => {
+      controller.abort();
+      return Promise.reject(new CommandCancelledError("d2"));
+    };
+    await assert.rejects(
+      renderDiagram(
+        {
+          source: "a -> b",
+          title: "Flow",
+          formats: ["source"],
+          save: { dir: "docs" },
+          cwd: root,
+          signal: controller.signal,
+        },
+        renderer,
+      ),
+      { name: "CommandCancelledError" },
+    );
+    await assert.rejects(readFile(join(root, "docs/flow.d2"), "utf8"), { code: "ENOENT" });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

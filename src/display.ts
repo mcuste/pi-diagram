@@ -1,7 +1,8 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
-import { basename, isAbsolute } from "node:path";
+import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
+import { isSessionArtifactPath } from "./artifacts.js";
 
 /**
  * Turns a diagram result into terminal components. Both the image and the text are drawn here
@@ -81,8 +82,12 @@ export function primeDisplay(): Promise<void> {
   const loading = specifier === undefined ? import("@earendil-works/pi-tui") : import(specifier);
   tuiLoading = loading.then(
     (module) => {
-      tui = module as unknown as TuiModule;
-      tui.getCapabilities();
+      const candidate = parseTuiModule(module);
+      if (candidate !== undefined && capabilities(candidate) !== undefined) {
+        tui = candidate;
+      } else {
+        readCapabilities(module);
+      }
     },
     () => {
       // Text rendering needs none of this, so a missing library is not worth reporting.
@@ -93,7 +98,8 @@ export function primeDisplay(): Promise<void> {
 
 /** Whether the terminal speaks an image protocol, or `undefined` until the library has loaded. */
 export function imagesSupported(): boolean | undefined {
-  return tui === undefined ? undefined : tui.getCapabilities().images !== null;
+  const supported = tui === undefined ? undefined : capabilities(tui);
+  return supported === undefined ? undefined : supported.images !== null;
 }
 
 /** Whether this package can draw a result row at all, or the host has to print the text. */
@@ -108,6 +114,53 @@ function loadedModule(): TuiModule {
     throw new Error("The TUI library is not loaded.");
   }
   return tui;
+}
+
+function parseTuiModule(value: unknown): TuiModule | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.getCapabilities === "function" &&
+    typeof candidate.hyperlink === "function" &&
+    typeof candidate.Text === "function" &&
+    typeof candidate.Container === "function" &&
+    typeof candidate.Image === "function"
+    ? (candidate as unknown as TuiModule)
+    : undefined;
+}
+
+function capabilities(
+  module: TuiModule,
+): { readonly images: "kitty" | "iterm2" | null; readonly hyperlinks: boolean } | undefined {
+  return readCapabilities(module);
+}
+
+function readCapabilities(
+  value: unknown,
+): { readonly images: "kitty" | "iterm2" | null; readonly hyperlinks: boolean } | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+  const getCapabilities = (value as Record<string, unknown>).getCapabilities;
+  if (typeof getCapabilities !== "function") {
+    return undefined;
+  }
+  try {
+    const found: unknown = getCapabilities();
+    if (typeof found !== "object" || found === null) {
+      return undefined;
+    }
+    const fields = found as Record<string, unknown>;
+    const images = fields.images;
+    const hyperlinks = fields.hyperlinks;
+    return (images === "kitty" || images === "iterm2" || images === null) &&
+      typeof hyperlinks === "boolean"
+      ? { images, hyperlinks }
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export interface DiagramCallView {
@@ -187,7 +240,7 @@ export function renderDiagramResult(
 }
 
 function openable(module: TuiModule, image: DisplayImage): string | undefined {
-  return module.getCapabilities().hyperlinks && isAbsolute(image.path)
+  return capabilities(module)?.hyperlinks === true && isSessionArtifactPath(image.path)
     ? pathToFileURL(image.path).href
     : undefined;
 }
@@ -197,7 +250,14 @@ function drawable(
   image: DisplayImage | undefined,
   context: DisplayContext,
 ): boolean {
-  return image !== undefined && context.showImages && module.getCapabilities().images !== null;
+  const supported = capabilities(module);
+  return (
+    image !== undefined &&
+    context.showImages &&
+    isSessionArtifactPath(image.path) &&
+    supported !== undefined &&
+    supported.images !== null
+  );
 }
 
 export interface DiagramView {
@@ -212,6 +272,9 @@ export interface DiagramView {
 
 /** Reads the image once per result row: the host calls the renderer again on every redraw. */
 function read(image: DisplayImage, context: DisplayContext): string {
+  if (!isSessionArtifactPath(image.path)) {
+    throw new Error("The image is not in this process's private store.");
+  }
   const cached = context.state.diagramImage;
   if (typeof cached === "object" && cached !== null) {
     const { path, encoded } = cached as { path?: unknown; encoded?: unknown };

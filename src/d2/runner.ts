@@ -11,6 +11,8 @@ import {
   CommandTimeoutError,
   runCommand,
 } from "../process.js";
+import { parseSafeSvg, SvgOutputError } from "../svg.js";
+import { findTerminalControl } from "../terminal.js";
 import { type Diagnostic, DiagramSourceError, parseD2Diagnostics } from "./diagnostics.js";
 import type { SafeD2Source } from "./preflight.js";
 import type { LayoutPolicy, RenderProfile } from "./profiles.js";
@@ -108,6 +110,14 @@ export class TextRenderUnavailableError extends Error {
   }
 }
 
+/** Formatting is optional, but source syntax and cancellation are not. */
+export class SourceFormatUnavailableError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "SourceFormatUnavailableError";
+  }
+}
+
 function args(...values: readonly string[]): readonly D2Argument[] {
   return values as readonly D2Argument[];
 }
@@ -175,8 +185,8 @@ function spacingArguments(layout: LayoutPolicy): readonly string[] {
 /** D2 reports strings such as `v0.8.1-HEAD`, so only the three numbers are compared. */
 export function parseD2Version(result: CommandResult): SupportedD2Version {
   const raw = (result.stdout.trim() || result.stderr.trim()).split("\n")[0]?.trim() ?? "";
-  const match = /^v?(\d+)\.(\d+)\.(\d+)/u.exec(raw);
-  if (!match || result.exitCode !== 0) {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z][0-9A-Za-z.+-]*)?$/u.exec(raw);
+  if (findTerminalControl(raw) !== undefined || !match || result.exitCode !== 0) {
     throw new D2UnavailableError(
       `Could not read a version from D2 (${raw ? JSON.stringify(raw) : "no output"}).`,
     );
@@ -248,18 +258,16 @@ export function parseRenderedText(raw: string, mode: AsciiMode): RenderedDiagram
     throw new TextRenderUnavailableError("D2 produced an empty text diagram.");
   }
 
-  for (const char of text) {
-    const code = char.codePointAt(0) ?? 0;
-    if (code < 32 && char !== "\n") {
-      throw new TextRenderUnavailableError(
-        `D2 text output contains a control character (U+${code.toString(16).padStart(4, "0").toUpperCase()}).`,
-      );
-    }
-    if (mode === "standard" && code > 126) {
-      throw new TextRenderUnavailableError(
-        `D2 returned a non-ASCII character (${JSON.stringify(char)}) in standard ASCII mode.`,
-      );
-    }
+  const control = findTerminalControl(text, true);
+  if (control !== undefined) {
+    throw new TextRenderUnavailableError(
+      `D2 text output contains a control character (U+${control.codePoint.toString(16).padStart(4, "0").toUpperCase()}).`,
+    );
+  }
+  if (mode === "standard" && /[^\x20-\x7e\n]/u.test(text)) {
+    throw new TextRenderUnavailableError(
+      "D2 returned a non-ASCII character in standard ASCII mode.",
+    );
   }
 
   const drew =
@@ -271,33 +279,18 @@ export function parseRenderedText(raw: string, mode: AsciiMode): RenderedDiagram
 }
 
 /**
- * D2 documents exported SVG as web content. The safe subset already rules out icons, images, and
- * Markdown labels, so anything active or externally referenced here means it was bypassed.
+ * A render is only safe after XML parsing and a static SVG policy accept every node, attribute,
+ * and stylesheet URL.
  */
 export function parseRenderedSvg(raw: string): RenderedSvg {
-  const svg = raw.trim();
-  if (svg.length === 0) {
-    throw new TextRenderUnavailableError("D2 produced an empty SVG.");
-  }
-  if (!svg.startsWith("<?xml") && !svg.startsWith("<svg")) {
-    throw new TextRenderUnavailableError("D2 output does not start like an SVG document.");
-  }
-  if (!svg.endsWith("</svg>")) {
-    throw new TextRenderUnavailableError("D2 returned a truncated SVG document.");
-  }
-
-  const lowered = svg.toLowerCase();
-  for (const forbidden of ["<script", "<foreignobject", "<image", "<iframe", "<use"]) {
-    if (lowered.includes(forbidden)) {
-      throw new TextRenderUnavailableError(
-        `D2 SVG contains ${forbidden}>, which this tool does not write.`,
-      );
+  try {
+    return parseSafeSvg(raw) as RenderedSvg;
+  } catch (error) {
+    if (error instanceof SvgOutputError) {
+      throw new TextRenderUnavailableError(error.message);
     }
+    throw error;
   }
-  if (/(?:xlink:)?href\s*=\s*["']?(?:https?:|\/\/)/u.test(lowered)) {
-    throw new TextRenderUnavailableError("D2 SVG references a remote URL.");
-  }
-  return svg as RenderedSvg;
 }
 
 /** Bounds what one session remembers about sources D2 already accepted. */
@@ -356,10 +349,12 @@ export class D2Cli implements D2Renderer {
       await writeFile(path, `${request.source}\n`, "utf8");
       const result = await this.run(FORMAT_ARGUMENTS, directory, request.signal);
       if (result.exitCode !== 0) {
-        throw new TextRenderUnavailableError(
-          "D2 could not format this source.",
-          parseD2Diagnostics(result.stderr, "D2_RENDER", [directory]),
-        );
+        throw new SourceFormatUnavailableError("D2 could not format this source.", {
+          cause: new DiagramSourceError(
+            "D2 could not format this source.",
+            parseD2Diagnostics(result.stderr, "D2_RENDER", [directory]),
+          ),
+        });
       }
       const formatted = await readFile(path, "utf8");
       await this.cache.write(key, formatted);

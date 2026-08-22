@@ -3,6 +3,8 @@
  * syntax error read the same way and the model has one thing to correct.
  */
 
+import { removeTerminalControls } from "../terminal.js";
+
 const MAX_DIAGNOSTICS = 10;
 const MAX_MESSAGE_LENGTH = 200;
 
@@ -97,7 +99,7 @@ export function parseD2Diagnostics(
 }
 
 function scrub(line: string, secretPaths: readonly string[]): string {
-  let text = line.trim();
+  let text = removeTerminalControls(line).trim();
   for (const prefix of NOISE_PREFIXES) {
     text = text.replace(prefix, "").trim();
   }

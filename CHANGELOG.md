@@ -25,6 +25,12 @@ All notable changes to this project are documented in this file. The format foll
 - Render preferences can be stored globally in each host's agent directory or per project in
   `.pi/pi-diagram.json` and `.omp/pi-diagram.json`. Flags and environment variables override
   persistent configuration.
+- SVG output now passes structural XML and CSS policy checks before it is rasterized or saved.
+- Artifact writes now stage and validate the complete bundle before replacing repository files.
+- Cancellation now stops pending repository writes. Raster and embedded-font sizes are bounded before
+  allocation.
+- Diagram requests, cache entries, configuration precedence, and terminal-bound text now use
+  stricter parsing.
 
 ## [0.2.1] - 2026-08-22
 
