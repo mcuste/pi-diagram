@@ -76,6 +76,34 @@ test("Pi and OMP use their own project configuration directories", async () => {
   }
 });
 
+test("the Pi executable selects Pi configuration in a Bun runtime", async () => {
+  const paths = await fixture();
+  const previous = Object.getOwnPropertyDescriptor(process.versions, "bun");
+  try {
+    await writeJson(join(paths.cwd, ".pi", "pi-diagram.json"), { render: "image" });
+    await writeJson(join(paths.cwd, ".omp", "pi-diagram.json"), { render: "unicode" });
+    Object.defineProperty(process.versions, "bun", {
+      configurable: true,
+      value: "1.3.0",
+    });
+    assert.equal(
+      await resolveRenderPreference({
+        ...paths,
+        entry: "/usr/local/bin/pi",
+        envPreference: undefined,
+      }),
+      "image",
+    );
+  } finally {
+    if (previous === undefined) {
+      Reflect.deleteProperty(process.versions, "bun");
+    } else {
+      Object.defineProperty(process.versions, "bun", previous);
+    }
+    await rm(paths.root, { recursive: true, force: true });
+  }
+});
+
 test("environment preference overrides persistent configuration", async () => {
   const paths = await fixture();
   try {

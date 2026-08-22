@@ -182,6 +182,7 @@ PI_DIAGRAM_RENDER=image pi
 
 Precedence is command-line flag, `PI_DIAGRAM_RENDER`, project configuration, global
 configuration, then the Unicode default.
+Configuration files are read before each diagram, so changes apply without restarting the host.
 
 On Kitty, Ghostty, WezTerm, iTerm2, and anything else that speaks a terminal image protocol,
 `auto` then shows the drawn diagram. At host startup the extension uses the host's TUI library to
@@ -196,11 +197,14 @@ and the agent has to forward the protocol: tmux needs `allow-passthrough`, and h
 The image never enters the model's context. It is written to a private temporary directory and
 read back when the row is displayed.
 
-The row is bounded to 80 by 30 character cells, so a dense diagram is drawn small. Where the
-terminal supports OSC 8 hyperlinks, the title above the diagram links to that file: click it and
-the diagram opens in the image viewer of the machine, which zooms and pans. A diagram with no
-title shows the linked file name under the image instead. Ghostty, Kitty, WezTerm, and iTerm2 all
-open such a link, some of them on a modified click.
+The collapsed row is a 60 by 18 cell preview. Press `Ctrl+O`, the default tool-expansion
+shortcut, to zoom the image to the available terminal width and up to 60 rows. Press it again to
+return to the preview.
+
+Where the terminal supports OSC 8 hyperlinks, the title above the diagram links to the full image
+file. A diagram with no title shows the linked file name under the image instead. Open that link
+to pan or zoom beyond the terminal view. Ghostty, Kitty, WezTerm, and iTerm2 support these links,
+some of them on a modified click.
 
 D2 exports PNG by driving a headless browser it downloads on first use, which this tool will not
 do during a call. Instead the SVG it already produces is rasterized locally by
@@ -215,8 +219,8 @@ an image. It is on the user's screen, so it is not repeated here.` Saved paths a
 it, so a conversation full of diagrams costs about what a conversation of text costs. Print, RPC,
 and JSON modes have no row to draw, so there the diagram is the result text.
 
-Expanding a row adds the render mode, the profile, the D2 version, the file paths, diagnostics,
-and the source.
+Expanding an image row zooms it and adds the render mode, the profile, the D2 version, the file
+paths, diagnostics, and the source.
 
 ## Where files go
 

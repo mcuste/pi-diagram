@@ -6,8 +6,14 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Added
+
+- `Ctrl+O` now toggles inline diagrams between a compact preview and a terminal-width zoom view.
+
 ### Fixed
 
+- Render configuration now applies when added during a running session. A Bun-based Pi executable
+  also reads `.pi/pi-diagram.json` instead of mistaking itself for OMP.
 - Inline PNGs now use the host TUI when Pi starts through an executable symlink. OMP tool
   arguments also no longer disable images by being mistaken for Pi's row context.
 - Unicode is now the only text rendering. The public `ascii` mode and automatic ASCII retry were

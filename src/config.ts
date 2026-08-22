@@ -1,7 +1,7 @@
 import type { Stats } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 const MAX_CONFIG_BYTES = 4 * 1024;
 const CONFIG_FILE = "pi-diagram.json";
@@ -14,6 +14,7 @@ export interface RenderPreferenceOptions {
   readonly host?: DiagramHost;
   readonly agentDir?: string;
   readonly envPreference?: unknown;
+  readonly entry?: string;
 }
 
 export function parseRenderPreference(value: unknown): RenderPreference {
@@ -28,7 +29,13 @@ export function parseRenderPreference(value: unknown): RenderPreference {
   );
 }
 
-function detectedHost(): DiagramHost {
+function detectedHost(entry: string | undefined = process.argv[1]): DiagramHost {
+  const executable = basename(entry ?? "")
+    .toLowerCase()
+    .replace(/\.exe$/u, "");
+  if (executable === "pi" || executable === "omp") {
+    return executable;
+  }
   return "bun" in process.versions ? "omp" : "pi";
 }
 
@@ -80,7 +87,7 @@ export async function resolveRenderPreference(
     return parseRenderPreference(environmentPreference);
   }
 
-  const host = options.host ?? detectedHost();
+  const host = options.host ?? detectedHost(options.entry);
   const cwd = options.cwd ?? process.cwd();
   const agentDir = options.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? defaultAgentDir(host);
   const globalPreference = await readPreference(join(agentDir, CONFIG_FILE));

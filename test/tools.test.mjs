@@ -84,9 +84,38 @@ test("the extension flag supplies the preference at execution time", async () =>
     },
     { envPreference: "unicode" },
   );
-  assert.equal(preference(), "unicode");
+  assert.equal(await preference(), "unicode");
   flags.set("diagram-render", "image");
-  assert.equal(preference(), "image");
+  assert.equal(await preference(), "image");
+});
+
+test("project configuration added during a session applies to the next call", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-live-config-"));
+  const cwd = join(root, "project");
+  const agentDir = join(root, "agent");
+  const flags = new Map();
+  try {
+    await mkdir(cwd, { recursive: true });
+    await mkdir(agentDir, { recursive: true });
+    const preference = await registerDiagramPreference(
+      {
+        registerFlag(name, options) {
+          flags.set(name, options.default);
+        },
+        getFlag(name) {
+          return flags.get(name);
+        },
+      },
+      { agentDir, host: "pi", envPreference: undefined },
+    );
+    assert.equal(await preference(cwd), "unicode");
+
+    await mkdir(join(cwd, ".pi"), { recursive: true });
+    await writeFile(join(cwd, ".pi", "pi-diagram.json"), '{"render":"image"}\n');
+    assert.equal(await preference(cwd), "image");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("only a repository write asks for approval", () => {
@@ -331,6 +360,50 @@ test("the default preference stays Unicode even where images are supported", asy
   });
 });
 
+test("a project image preference produces an inline image without a request override", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-image-config-"));
+  const cwd = join(root, "project");
+  const flags = new Map();
+  try {
+    await mkdir(join(cwd, ".pi"), { recursive: true });
+    await writeFile(join(cwd, ".pi", "pi-diagram.json"), '{"render":"image"}\n');
+    const preference = await registerDiagramPreference(
+      {
+        registerFlag(name, options) {
+          flags.set(name, options.default);
+        },
+        getFlag(name) {
+          return flags.get(name);
+        },
+      },
+      { agentDir: join(root, "agent"), host: "pi", envPreference: undefined },
+    );
+    const tool = registerWithRasterizer(preference);
+
+    await withCapabilities({ images: "kitty" }, async () => {
+      const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
+        cwd,
+        mode: "tui",
+      });
+      assert.equal(result.details.effectiveRender, "image");
+      assert.equal(result.details.renderedAs, "image");
+      assert.ok(result.details.image);
+
+      const rows = tool
+        .renderResult(result, { expanded: false }, theme, { showImages: true, state: {} })
+        .render(120);
+      assert.ok(
+        rows.some((row) => row.includes("\x1b_G")),
+        rows.join("\n"),
+      );
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("an explicit image request overrides the Unicode preference", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
@@ -465,6 +538,36 @@ test("an image is shown as a component, and the text takes over when images are 
     .join("\n");
   assert.match(off, /┌/);
   assert.match(off, /Image support is unavailable; generated as Unicode\./);
+});
+
+test("expanding an image row zooms it to the terminal width", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const tool = registerWithImages();
+
+  await withCapabilities({ images: "kitty" }, async () => {
+    const result = await drawInTui(tool, { source: "a -> b" });
+    const context = { showImages: true, state: {} };
+    const draw = (expanded) =>
+      tool.renderResult(result, { expanded }, theme, context).render(120).join("\n");
+    const size = (drawn) => {
+      const command = drawn.split("\n").find((line) => line.includes("\x1b_G"));
+      assert.ok(command, drawn);
+      return {
+        columns: Number(/(?:^|,)c=(\d+)/.exec(command)?.[1]),
+        rows: Number(/(?:^|,)r=(\d+)/.exec(command)?.[1]),
+      };
+    };
+
+    const collapsed = draw(false);
+    const expanded = draw(true);
+    const preview = size(collapsed);
+    const zoomed = size(expanded);
+    assert.ok(zoomed.columns > preview.columns, `${preview.columns} -> ${zoomed.columns}`);
+    assert.ok(zoomed.rows > preview.rows, `${preview.rows} -> ${zoomed.rows}`);
+    assert.match(collapsed, /Ctrl\+O: zoom image/);
+    assert.match(expanded, /Ctrl\+O: fit image/);
+  });
 });
 
 test("an OMP renderer argument does not disable a supported image", async () => {

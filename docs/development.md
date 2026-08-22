@@ -64,6 +64,10 @@ display layer accepts nothing else. D2's own PNG export needs a headless browser
 downloads on first use, which ADR-011 rules out, so `src/raster.ts` draws the SVG this tool
 already produced.
 
+The collapsed result uses a 60 by 18 cell preview. The host's expanded state is the zoom control:
+`renderResult` removes the preview width cap and permits up to 60 rows. The TUI still limits the
+image to the current render width, so it cannot overflow horizontally.
+
 The diagram is also a link. `openable` in `src/display.ts` turns the path in the temp store into
 a `file://` URL, and the title, or the file name when there is no title, carries it. The link is
 emitted only when the terminal reports OSC 8 support and only when the image is really drawn,

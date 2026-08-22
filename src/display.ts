@@ -9,10 +9,10 @@ import { pathToFileURL } from "node:url";
  * read from the temp store at display time.
  */
 
-/** Wide enough for an architecture diagram, short enough to leave the transcript readable. */
-const MAX_WIDTH_CELLS = 80;
-/** Without a bound the library reserves a square, about 40 rows, drawn or not. */
-const MAX_HEIGHT_CELLS = 30;
+const PREVIEW_MAX_WIDTH_CELLS = 60;
+const PREVIEW_MAX_HEIGHT_CELLS = 18;
+const ZOOM_MAX_HEIGHT_CELLS = 60;
+const UNBOUNDED_WIDTH_CELLS = Number.MAX_SAFE_INTEGER;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
 export interface Component {
@@ -155,8 +155,8 @@ export function renderDiagramResult(
           "image/png",
           { fallbackColor: (text: string) => theme.fg("toolOutput", text) },
           {
-            maxWidthCells: MAX_WIDTH_CELLS,
-            maxHeightCells: MAX_HEIGHT_CELLS,
+            maxWidthCells: context.expanded ? UNBOUNDED_WIDTH_CELLS : PREVIEW_MAX_WIDTH_CELLS,
+            maxHeightCells: context.expanded ? ZOOM_MAX_HEIGHT_CELLS : PREVIEW_MAX_HEIGHT_CELLS,
             filename: image.path,
           },
           { widthPx: image.widthPx, heightPx: image.heightPx },
@@ -166,6 +166,13 @@ export function renderDiagramResult(
         const name = module.hyperlink(basename(image.path), url);
         container.addChild(new module.Text(theme.fg("muted", name), 0, 0));
       }
+      container.addChild(
+        new module.Text(
+          theme.fg("muted", context.expanded ? "Ctrl+O: fit image" : "Ctrl+O: zoom image"),
+          0,
+          0,
+        ),
+      );
     } catch {
       // The picture is gone from the temp store, so show the text instead.
       line(view.text);
@@ -179,10 +186,6 @@ export function renderDiagramResult(
   return container;
 }
 
-/**
- * The picture as a link, so a click opens it where it can be zoomed. The row is bounded to keep
- * the transcript readable, so the file is the only way to see a dense diagram in full.
- */
 function openable(module: TuiModule, image: DisplayImage): string | undefined {
   return module.getCapabilities().hyperlinks && isAbsolute(image.path)
     ? pathToFileURL(image.path).href

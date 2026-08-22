@@ -42,7 +42,7 @@ const RENDER_FLAG = "diagram-render";
 export interface DiagramPreferenceApi {
   registerFlag(
     name: string,
-    options: { readonly description: string; readonly type: "string"; readonly default: string },
+    options: { readonly description: string; readonly type: "string"; readonly default?: string },
   ): void;
   getFlag(name: string): boolean | string | undefined;
 }
@@ -50,14 +50,21 @@ export interface DiagramPreferenceApi {
 export async function registerDiagramPreference(
   pi: DiagramPreferenceApi,
   options: RenderPreferenceOptions = {},
-): Promise<() => RenderPreference> {
-  const defaultPreference = await resolveRenderPreference(options);
+): Promise<(cwd?: string) => Promise<RenderPreference>> {
   pi.registerFlag(RENDER_FLAG, {
     description: "Default diagram rendering: unicode or image",
     type: "string",
-    default: defaultPreference,
   });
-  return () => parseRenderPreference(pi.getFlag(RENDER_FLAG));
+  return async (cwd) => {
+    const flagPreference = pi.getFlag(RENDER_FLAG);
+    if (flagPreference !== undefined) {
+      return parseRenderPreference(flagPreference);
+    }
+    return resolveRenderPreference({
+      ...options,
+      ...(cwd === undefined ? {} : { cwd }),
+    });
+  };
 }
 
 const DiagramSource = Type.String({
@@ -304,7 +311,7 @@ export interface DiagramExtensionApi {
 export interface DiagramExtensionDependencies {
   readonly renderer?: D2Renderer;
   readonly rasterizer?: SvgRasterizer;
-  readonly renderPreference?: () => RenderPreference;
+  readonly renderPreference?: (cwd: string) => RenderPreference | Promise<RenderPreference>;
 }
 
 /** Only `save` reaches the repository. The temp store changes nothing worth approving. */
@@ -489,7 +496,7 @@ export function registerDiagramTools(
       }
       const effectiveRender =
         parameters.render === undefined || parameters.render === "auto"
-          ? renderPreference()
+          ? await renderPreference(context.cwd)
           : parameters.render;
       const imageSupported = drawnHere && imagesSupported() === true;
       const rendering = await renderDiagram(
