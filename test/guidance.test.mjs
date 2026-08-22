@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { DIAGRAM_GUIDANCE, registerDiagramGuidance, withGuidance } from "../dist/guidance.js";
+import { registerDiagramGuidance, withGuidance } from "../dist/guidance.js";
 
 const PI_PROMPT = "You are an expert coding assistant.";
+const DIAGRAM_GUIDANCE = (
+  await readFile(new URL("../src/guidance.md", import.meta.url), "utf8")
+).trimEnd();
 
-function register() {
+async function register() {
   const handlers = new Map();
-  registerDiagramGuidance({
+  await registerDiagramGuidance({
     on(event, handler) {
       handlers.set(event, handler);
     },
@@ -14,9 +18,14 @@ function register() {
   return handlers;
 }
 
-test("the guidance is registered on the host prompt hook", () => {
-  const handlers = register();
-  assert.deepEqual([...handlers.keys()], ["before_agent_start"]);
+test("the guidance is loaded before the host prompt hook", async () => {
+  const handlers = await register();
+  const handler = handlers.get("before_agent_start");
+  assert.ok(handler);
+  assert.equal(
+    handler({ systemPrompt: PI_PROMPT }).systemPrompt,
+    `${PI_PROMPT}\n\n${DIAGRAM_GUIDANCE}`,
+  );
 });
 
 test("Pi gets the guidance after its prompt", () => {

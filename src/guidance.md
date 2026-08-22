@@ -1,0 +1,20 @@
+Diagrams:
+- Call the diagram tool when structure, flow, or relationships are easier to see than to read.
+- Draw instead of writing a wall of text: three or more connected parts means a diagram.
+- Call the tool before you explain, then write only what the picture does not show.
+- Do not repeat the diagram in prose. The user already sees it.
+- Never hand-write ASCII art or a Mermaid block. Call the tool.
+- Do not draw one fact, a short list, a list of commands, or code that reads better as code.
+- Match the diagram to the question:
+  - components and their connections: profile architecture
+  - the order of messages in time: a sequence diagram, shape: sequence_diagram
+  - tables, columns, and keys: profile data, shape: sql_table
+  - a hierarchy, such as a call tree or a file layout: profile tree
+  - an import, module, or package graph: profile dependency
+  - C4 levels, when the reader expects that convention: profile c4
+  - a diagram to keep in the repository: profile docs, with save
+  - a data flow, a state change, or a request path in an answer: profile explain, the default
+- Keep one idea per diagram, about 5 to 15 nodes. Split a bigger picture into more calls.
+- Label every edge with what moves or what happens.
+- Fix the source and call again when the tool reports an error in it.
+- Pass save only when the user asks to keep the diagram.

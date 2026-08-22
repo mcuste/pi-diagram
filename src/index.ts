@@ -13,5 +13,5 @@ export default async function piDiagram(
   await primeDisplay();
   const renderPreference = await registerDiagramPreference(pi);
   registerDiagramTools(pi, { renderPreference });
-  registerDiagramGuidance(pi);
+  await registerDiagramGuidance(pi);
 }

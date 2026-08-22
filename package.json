@@ -41,7 +41,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-guidance.mjs",
     "check": "pnpm quality && pnpm package:check && pnpm test && pnpm test:integration && pnpm deadcode && pnpm security",
     "deadcode": "knip",
     "fix": "biome check --write .",

@@ -6,7 +6,8 @@
 | --- | --- |
 | `src/index.ts` | Extension entry point; both hosts load it directly |
 | `src/tools.ts` | The `diagram` tool: schema, approval tier, and result shape |
-| `src/guidance.ts` | The prompt block that tells the model when to draw, and how it is appended |
+| `src/guidance.md` | The editable prompt injected before an agent starts |
+| `src/guidance.ts` | Loading the cached prompt and appending it to the host prompt |
 | `src/render.ts` | Representation choice, Unicode fallback, and transcript limits |
 | `src/config.ts` | Persistent render preference paths and precedence |
 | `src/raster.ts` | Drawing the SVG as a PNG, and the checks on what comes back |
@@ -105,12 +106,12 @@ Pi loads TypeScript through [jiti](https://github.com/unjs/jiti) and Oh My Pi ru
 is needed to install from npm, git, or a local path. The `dist/` build exists as a type check and
 for anyone importing the package directly.
 
-The prompt block in `src/guidance.ts` is appended by the `before_agent_start` hook, which is the
-only prompt hook both hosts have. Pi hands the prompt over as one string and Oh My Pi as ordered
-blocks, so both shapes are handled, and the hook replaces what it returns: a prompt that cannot be
-read is left alone rather than being reduced to the block. The block is left out when the host
-reports that the `diagram` tool is not active, and a prompt that already carries it is not given a
-second copy.
+The prompt lives in `src/guidance.md`. `registerDiagramGuidance` reads it once and caches it before
+installing the `before_agent_start` hook. The build copies it to `dist/guidance.md` for direct
+package imports. Pi hands the prompt over as one string and Oh My Pi as ordered blocks, so both
+shapes are handled, and the hook replaces what it returns: a prompt that cannot be read is left
+alone rather than being reduced to the block. The block is left out when the host reports that the
+`diagram` tool is not active, and a prompt that already carries it is not given a second copy.
 
 `typebox` is a peer dependency. Both hosts bundle it, and a second copy would hand the host a schema
 it does not recognise.
