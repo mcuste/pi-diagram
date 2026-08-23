@@ -36,22 +36,14 @@ test("runtime dependencies rasterize images and parse SVG structure", () => {
   assert.deepEqual(Object.keys(manifest.dependencies), ["@resvg/resvg-js", "@xmldom/xmldom"]);
 });
 
-test("the entry point registers the diagram tool and render preference", async () => {
+test("the entry point registers the diagram tool", async () => {
   const registered = [];
-  const flags = new Map();
   await piDiagram({
     registerTool(definition) {
       registered.push(definition.name);
     },
-    registerFlag(name, options) {
-      flags.set(name, options.default);
-    },
-    getFlag(name) {
-      return flags.get(name);
-    },
   });
   assert.deepEqual(registered, ["diagram"]);
-  assert.equal(flags.has("diagram-render"), true);
 });
 
 test("the Oh My Pi marketplace catalog points back at this package", async () => {

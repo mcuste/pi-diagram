@@ -116,7 +116,7 @@ test("malformed optional fields are refused instead of treated as absent", async
   const renderer = createRenderer();
   for (const request of [
     { source: "a -> b", title: null },
-    { source: "a -> b", images: "yes" },
+    { source: "a -> b", render: 1 },
     { source: "a -> b", save: { dir: "docs", basename: null }, cwd: process.cwd() },
   ]) {
     await assert.rejects(renderDiagram(request, renderer), { name: "DiagramSourceError" });
@@ -124,26 +124,41 @@ test("malformed optional fields are refused instead of treated as absent", async
   assert.deepEqual(renderer.calls, []);
 });
 
-test("an image request is answered with text where the host cannot show one", async () => {
+test("an image request prepares PNG while Unicode remains the text fallback", async () => {
   const renderer = createRenderer();
-  const rendering = await renderDiagram({ source: "a -> b", render: "image" }, renderer);
-  assert.equal(rendering.renderedAs, "unicode");
-  assert.equal(rendering.image, undefined);
-  assert.equal(textCalls(renderer)[0].asciiMode, "extended");
-  // Nothing was rasterized, so no SVG was asked for either.
-  assert.equal(
-    renderer.calls.some((call) => call.kind === "svg"),
-    false,
+  const rasterizer = createRasterizer();
+  const rendering = await renderDiagram(
+    { source: "a -> b", render: "image" },
+    renderer,
+    rasterizer,
   );
+  assert.equal(rendering.renderedAs, "unicode");
+  assert.equal(rendering.image?.widthPx, 800);
+  assert.equal(rendering.image?.heightPx, 600);
+  assert.equal(textCalls(renderer)[0].asciiMode, "extended");
+  assert.deepEqual(
+    renderer.calls.map((call) => call.kind),
+    ["text", "svg"],
+  );
+  assert.equal(rasterizer.calls.length, 1);
 });
 
-test("source mode returns the normalized source without running D2", async () => {
+test("source mode selects normalized source without skipping the generated bundle", async () => {
   const renderer = createRenderer();
-  const rendering = await renderDiagram({ source: " a -> b \r\n", render: "source" }, renderer);
+  const rasterizer = createRasterizer();
+  const rendering = await renderDiagram(
+    { source: " a -> b \r\n", render: "source" },
+    renderer,
+    rasterizer,
+  );
   assert.equal(rendering.renderedAs, "source");
   assert.equal(rendering.text, "a -> b");
-  assert.equal(rendering.d2Version, undefined);
-  assert.deepEqual(renderer.calls, []);
+  assert.equal(rendering.d2Version, "v0.8.1-HEAD");
+  assert.ok(rendering.image);
+  assert.deepEqual(
+    renderer.calls.map((call) => call.kind),
+    ["text", "svg"],
+  );
 });
 
 test("the source that was drawn comes back for the expanded row", async () => {
@@ -154,16 +169,69 @@ test("the source that was drawn comes back for the expanded row", async () => {
   assert.deepEqual(rendering.diagnostics, []);
 });
 
-test("Unicode failure is not replaced with ASCII", async () => {
+test("Unicode failure keeps the PNG and falls back to source, never ASCII", async () => {
   const renderer = createRenderer({ extended: new TextRenderUnavailableError("beta renderer") });
-  await assert.rejects(renderDiagram({ source: "a -> b" }, renderer), {
-    name: "TextRenderUnavailableError",
-    message: /beta and cannot draw every diagram.*render: "source"/s,
-  });
+  const rendering = await renderDiagram({ source: "a -> b" }, renderer, createRasterizer());
+  assert.equal(rendering.renderedAs, "source");
+  assert.equal(rendering.text, "a -> b");
+  assert.ok(rendering.image);
   assert.deepEqual(
     textCalls(renderer).map((call) => call.asciiMode),
     ["extended"],
   );
+});
+
+test("text and SVG failures reject when no usable representation remains", async () => {
+  const textFailure = new TextRenderUnavailableError("beta renderer", [
+    { code: "D2_RENDER", message: "cannot draw this shape as text", line: 2 },
+  ]);
+  await assert.rejects(
+    renderDiagram(
+      { source: "a -> b" },
+      createRenderer({ extended: textFailure, svg: new SvgRenderUnavailableError("unsafe SVG") }),
+    ),
+    {
+      name: "TextRenderUnavailableError",
+      message: /beta and cannot draw every diagram.*render: "source"/s,
+    },
+  );
+});
+
+test("source mode remains usable when text and SVG rendering fail", async () => {
+  const rendering = await renderDiagram(
+    { source: " a -> b \r\n", render: "source" },
+    createRenderer({
+      extended: new TextRenderUnavailableError("beta renderer"),
+      svg: new SvgRenderUnavailableError("unsafe SVG"),
+    }),
+  );
+  assert.equal(rendering.renderedAs, "source");
+  assert.equal(rendering.text, "a -> b");
+  assert.equal(rendering.image, undefined);
+  assert.match(rendering.notes.join("\n"), /unsafe SVG.*SVG and PNG could not be generated/s);
+});
+
+test("a required SVG failure writes no partial artifact", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-render-"));
+  try {
+    await assert.rejects(
+      renderDiagram(
+        {
+          source: "a -> b",
+          title: "Flow",
+          formats: ["source", "svg"],
+          save: { dir: "docs" },
+          cwd: root,
+        },
+        createRenderer({ svg: new SvgRenderUnavailableError("unsafe SVG") }),
+      ),
+      { name: "SvgRenderUnavailableError" },
+    );
+    await assert.rejects(readFile(join(root, "docs/flow.d2"), "utf8"), { code: "ENOENT" });
+    await assert.rejects(readFile(join(root, "docs/flow.svg"), "utf8"), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("source problems are reported before D2 is ever started", async () => {
@@ -251,13 +319,16 @@ test("saving is refused before D2 runs, because a bad path costs nothing to catc
   assert.deepEqual(renderer.calls, [], "D2 ran for a request that could never be saved");
 });
 
-test("an SVG is only rendered when it is going to be written", async () => {
+test("every diagram prepares Unicode, SVG, and PNG", async () => {
   const renderer = createRenderer();
-  await renderDiagram({ source: "a -> b" }, renderer);
+  const rasterizer = createRasterizer();
+  const rendering = await renderDiagram({ source: "a -> b" }, renderer, rasterizer);
   assert.deepEqual(
     renderer.calls.map((call) => call.kind),
-    ["text"],
+    ["text", "svg"],
   );
+  assert.equal(rasterizer.calls.length, 1);
+  assert.ok(rendering.image?.path.endsWith(".png"));
 });
 
 test("a text failure still saves the SVG and shows the source instead", async () => {
@@ -370,16 +441,6 @@ test("formatting cannot smuggle anything past the safe subset", async () => {
   }
 });
 
-test("a text failure with nothing saved still fails the call", async () => {
-  const renderer = createRenderer({
-    extended: new TextRenderUnavailableError("beta renderer"),
-    standard: new TextRenderUnavailableError("beta renderer"),
-  });
-  await assert.rejects(renderDiagram({ source: "a -> b" }, renderer), {
-    name: "TextRenderUnavailableError",
-  });
-});
-
 test("source mode still writes a txt when one is asked for", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-diagram-render-"));
   try {
@@ -426,31 +487,30 @@ function createRasterizer({ png = PNG_BYTES, systemFonts = false, error } = {}) 
   };
 }
 
-test("a host that can show images gets one, with text kept as the fallback", async () => {
+test("the generated PNG is kept with Unicode as its fallback", async () => {
   const renderer = createRenderer();
   const rasterizer = createRasterizer();
-  const rendering = await renderDiagram({ source: "a -> b", images: true }, renderer, rasterizer);
+  const rendering = await renderDiagram({ source: "a -> b" }, renderer, rasterizer);
 
   assert.equal(rendering.image?.widthPx, 800);
   assert.equal(rendering.image?.heightPx, 600);
   assert.ok(rendering.image?.path.endsWith(".png"), rendering.image?.path);
   assert.equal(await readFile(rendering.image.path, "utf8"), PNG_BYTES.toString("utf8"));
-  // The text is still drawn, because whether images display is only known later.
   assert.equal(rendering.renderedAs, "unicode");
   assert.equal(rendering.text, UNICODE_DIAGRAM);
   assert.equal(rasterizer.calls[0].svg, SVG);
 });
 
-test("asking for a text representation keeps the image out", async () => {
+test("text display overrides do not skip PNG generation", async () => {
   for (const render of ["unicode", "source"]) {
     const rasterizer = createRasterizer();
     const rendering = await renderDiagram(
-      { source: "a -> b", render, images: true },
+      { source: "a -> b", render },
       createRenderer(),
       rasterizer,
     );
-    assert.equal(rendering.image, undefined, render);
-    assert.equal(rasterizer.calls.length, 0, render);
+    assert.ok(rendering.image, render);
+    assert.equal(rasterizer.calls.length, 1, render);
   }
 });
 
@@ -458,21 +518,17 @@ test("an image that cannot be drawn leaves the diagram working, with a note", as
   const rasterizer = createRasterizer({
     error: new ImageRenderUnavailableError("The rasterizer is missing."),
   });
-  const rendering = await renderDiagram(
-    { source: "a -> b", images: true },
-    createRenderer(),
-    rasterizer,
-  );
+  const rendering = await renderDiagram({ source: "a -> b" }, createRenderer(), rasterizer);
 
   assert.equal(rendering.image, undefined);
   assert.equal(rendering.renderedAs, "unicode");
-  assert.match(rendering.notes.join("\n"), /rasterizer is missing.*shown as text/s);
+  assert.match(rendering.notes.join("\n"), /rasterizer is missing.*PNG could not be generated/s);
 });
 
 test("a failure that is not an image problem is not swallowed", async () => {
   await assert.rejects(
     renderDiagram(
-      { source: "a -> b", images: true },
+      { source: "a -> b" },
       createRenderer(),
       createRasterizer({ error: new TypeError("bug") }),
     ),
@@ -482,17 +538,17 @@ test("a failure that is not an image problem is not swallowed", async () => {
 
 test("an optional SVG failure preserves a usable text diagram", async () => {
   const rendering = await renderDiagram(
-    { source: "a -> b", images: true },
+    { source: "a -> b" },
     createRenderer({ svg: new SvgRenderUnavailableError("unsafe SVG") }),
   );
   assert.equal(rendering.renderedAs, "unicode");
   assert.equal(rendering.image, undefined);
-  assert.match(rendering.notes.join("\n"), /unsafe SVG.*shown as text/s);
+  assert.match(rendering.notes.join("\n"), /unsafe SVG.*SVG and PNG could not be generated/s);
 });
 
 test("labels the diagram's own font cannot draw are reported", async () => {
   const rendering = await renderDiagram(
-    { source: "a -> b", images: true },
+    { source: "a -> b" },
     createRenderer(),
     createRasterizer({ systemFonts: true }),
   );
@@ -501,7 +557,7 @@ test("labels the diagram's own font cannot draw are reported", async () => {
 
 test("measured width uses terminal cells and source mode honours cancellation", async () => {
   const wide = createRenderer({ extended: "表" });
-  assert.equal((await renderDiagram({ source: "a -> b" }, wide)).widthCells, 2);
+  assert.equal((await renderDiagram({ source: "a -> b" }, wide, createRasterizer())).widthCells, 2);
 
   const controller = new AbortController();
   controller.abort();
@@ -521,7 +577,6 @@ test("a png reaches the repository only when it is asked for", async () => {
       {
         source: "a -> b",
         title: "Flow",
-        images: true,
         formats: ["source"],
         save: { dir: "docs" },
         cwd: root,
@@ -533,7 +588,7 @@ test("a png reaches the repository only when it is asked for", async () => {
       kept.saved.map((artifact) => artifact.path),
       ["docs/flow.d2"],
     );
-    // The image still exists for the terminal, outside the repository.
+    // PNG stays private unless requested.
     assert.ok(kept.image?.path.startsWith(tmpdir()), kept.image?.path);
 
     const saved = await renderDiagram(

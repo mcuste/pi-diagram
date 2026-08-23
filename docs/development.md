@@ -9,8 +9,7 @@
 | `src/tool-description.md` | The editable description shown to the model with the tool |
 | `src/guidance.md` | The editable prompt injected before an agent starts |
 | `src/guidance.ts` | Loading the cached prompt and appending it to the host prompt |
-| `src/render.ts` | Representation choice, Unicode fallback, and transcript limits |
-| `src/config.ts` | Persistent render preference paths and precedence |
+| `src/render.ts` | Unicode, SVG, and PNG generation, fallbacks, and transcript limits |
 | `src/raster.ts` | Drawing the SVG as a PNG, and the checks on what comes back |
 | `src/display.ts` | Building the terminal components, including the inline image |
 | `src/terminal.ts` | Control-character parsing for text that reaches a terminal |
@@ -71,14 +70,15 @@ display layer parses those bytes again after reading the temp file. D2's own PNG
 headless browser that Playwright downloads on first use, which ADR-011 rules out, so
 `src/raster.ts` draws the SVG this tool already produced.
 
-`renderDiagram` prepares every render, fallback, measurement, and artifact payload before it
-commits any workspace file. The commit step only receives a complete prepared result. An optional
-inline-image SVG failure leaves usable text intact. Explicit SVG and PNG artifact requests still
-fail rather than writing a partial representation.
+`renderDiagram` prepares Unicode, a validated SVG, and a raster PNG before it commits any workspace
+file. The commit step only receives a complete prepared result. An optional SVG or PNG failure
+leaves usable text intact and adds a note. An explicit SVG save still fails if no safe SVG can be
+produced. An explicit PNG save writes no empty file when rasterization fails.
 
-The collapsed result uses a 60 by 18 cell preview. The host's expanded state is the zoom control:
-`renderResult` removes the preview width cap and permits up to 60 rows. The TUI still limits the
-image to the current render width, so it cannot overflow horizontally.
+The collapsed default result shows Unicode. The host's expanded state is the zoom control:
+`renderResult` replaces Unicode with a PNG that fills the terminal width. Tall diagrams continue
+below the viewport. An explicit image request uses the existing 60 by 18 cell preview before
+expansion.
 
 The diagram is also a link. `openable` in `src/display.ts` turns the path in the temp store into
 a `file://` URL, and the title, or the file name when there is no title, carries it. The link is
@@ -92,15 +92,15 @@ its rows and draw nothing. `tuiSpecifier` resolves the real host entry point fir
 executable symlink still leads to the host package. The static bare fallback lets OMP remap the
 legacy package name to its in-process compatibility module.
 
-The async extension factory resolves the host's `pi-tui` copy and detects image support before the
-host starts its session. A tool call therefore cannot race this initialization. Whether a result
-row actually draws an image is still settled when it is displayed, so both representations are
-prepared. `renderResult` throws only when the terminal library is missing, which tells the host to
-print the content instead.
+The async extension factory resolves the host's `pi-tui` copy before the host starts its session.
+A tool call therefore cannot race this initialization. Capability detection controls only display:
+every call prepares all three representations. An unsupported terminal sees Unicode normally and
+gets the image limitation only after expanding the row. `renderResult` throws only when the
+terminal library is missing, which tells the host to print the content instead.
 
-So in a terminal the model gets a summary line and the diagram travels in `details`. Nothing calls
-`renderResult` in print, RPC, and JSON modes, so there `content` still carries the text.
-`renderCall` draws the waiting row from the arguments, and leaves the source out of it.
+In a terminal the model gets a summary line and the diagram travels in `details`. Nothing calls
+`renderResult` in print, RPC, and JSON modes, so there `content` carries Unicode text.
+`renderCall` draws the waiting row from the arguments and leaves the source out.
 
 Pi loads TypeScript through [jiti](https://github.com/unjs/jiti) and Oh My Pi runs it natively, so
 `package.json` points both `pi.extensions` and `omp.extensions` at `src/index.ts` and no build step
@@ -138,15 +138,16 @@ pnpm release <version> # Prepare, gate, commit, and tag a release
 
 ## Testing against a real host
 
-The default is Unicode. Disable discovered extensions so an installed copy of this package cannot
-conflict with the working copy:
+Disable discovered extensions so an installed copy of this package cannot conflict with the
+working copy:
 
 ```bash
 pi -ne -e ./src/index.ts
 omp --no-extensions -e ./src/index.ts
 ```
 
-Add `--diagram-render image` to test the image path.
+Run a diagram, then press `Ctrl+O` to check the PNG view. Use `render: "image"` in a tool call to
+check the explicit compact image override.
 
 Or install the working copy:
 
@@ -155,10 +156,8 @@ pi install /absolute/path/to/pi-diagram
 omp plugin link /absolute/path/to/pi-diagram
 ```
 
-A test that needs an image sets the pi-tui capabilities with `withCapabilities` instead of
-inheriting them. The terminal that runs the suite decides whether an image is produced at all, so
-an inherited capability passes on a developer machine and fails on a CI runner, which has no
-terminal.
+A test that displays an image sets the pi-tui capabilities with `withCapabilities` instead of
+inheriting them. The terminal running the suite should not decide whether the test passes.
 
 The two suites are separated by filename, not by an environment variable, so neither can be
 skipped without the skip being visible in the run. The integration suite asserts structure rather

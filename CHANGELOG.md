@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Every diagram now prepares Unicode, SVG, and PNG. The collapsed row shows Unicode, and `Ctrl+O`
+  replaces it with a terminal-width PNG where inline images are supported.
+- Unsupported terminals report the image limitation only after the user presses `Ctrl+O`.
+- Saved documentation continues to use SVG by default. Per-call `render` and `formats` overrides
+  remain available.
+
+### Removed
+
+- Removed render flags, environment variables, and project or global preference files.
+
 ## [0.3.0] - 2026-08-22
 
 ### Added

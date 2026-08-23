@@ -1,14 +1,5 @@
 import { readFile } from "node:fs/promises";
 import { type Static, type TSchema, Type } from "typebox";
-import {
-  parseRenderPreference,
-  type RenderPreference,
-  type RenderPreferenceOptions,
-  resolveRenderPreference,
-} from "./config.js";
-
-export type { RenderPreference } from "./config.js";
-export { parseRenderPreference } from "./config.js";
 
 import { parseArtifactNames, workspacePaths } from "./artifacts.js";
 import { type Diagnostic, formatDiagnostic } from "./d2/diagnostics.js";
@@ -37,9 +28,7 @@ const MAX_SOURCE_LENGTH = 20_000;
 const MAX_TITLE_LENGTH = 120;
 const MAX_PATH_LENGTH = 255;
 
-const DEFAULT_RENDER_PREFERENCE: RenderPreference = "unicode";
-const IMAGE_UNAVAILABLE_WARNING = "Image support is unavailable; generated as Unicode.";
-const RENDER_FLAG = "diagram-render";
+const IMAGE_UNAVAILABLE_WARNING = "This terminal cannot display inline images.";
 
 let diagramDescription: string | undefined;
 let diagramDescriptionLoading: Promise<void> | undefined;
@@ -55,34 +44,6 @@ export function primeDiagramDescription(): Promise<void> {
     }
   });
   return diagramDescriptionLoading;
-}
-
-export interface DiagramPreferenceApi {
-  registerFlag(
-    name: string,
-    options: { readonly description: string; readonly type: "string"; readonly default?: string },
-  ): void;
-  getFlag(name: string): boolean | string | undefined;
-}
-
-export async function registerDiagramPreference(
-  pi: DiagramPreferenceApi,
-  options: RenderPreferenceOptions = {},
-): Promise<(cwd?: string) => Promise<RenderPreference>> {
-  pi.registerFlag(RENDER_FLAG, {
-    description: "Default diagram rendering: unicode or image",
-    type: "string",
-  });
-  return async (cwd) => {
-    const flagPreference = pi.getFlag(RENDER_FLAG);
-    if (flagPreference !== undefined) {
-      return parseRenderPreference(flagPreference);
-    }
-    return resolveRenderPreference({
-      ...options,
-      ...(cwd === undefined ? {} : { cwd }),
-    });
-  };
 }
 
 const DiagramSource = Type.String({
@@ -118,7 +79,7 @@ const DiagramRender = Type.Union(
   [Type.Literal("auto"), Type.Literal("image"), Type.Literal("unicode"), Type.Literal("source")],
   {
     description:
-      "`auto` uses the user's diagram render preference. Explicit `image`, `unicode`, and `source` override it for this call.",
+      "`auto` shows Unicode by default and a PNG after Ctrl+O. Explicit modes override the display for this call.",
   },
 );
 
@@ -133,7 +94,7 @@ const DiagramFormats = Type.Array(DiagramFormat, {
   minItems: 1,
   uniqueItems: true,
   description:
-    "Files to produce. They are written outside the repository and their paths are returned. Defaults to editable source and an SVG.",
+    "Artifacts to write and return. Defaults to editable source and SVG; use SVG in documents.",
 });
 
 /** What the transcript shows, which is not always the text representation that was prepared. */
@@ -185,9 +146,7 @@ interface DiagramToolDetails {
   readonly title?: string;
   readonly profile: ProfileName;
   readonly requested: Static<typeof DiagramRender>;
-  readonly effectiveRender: Exclude<Static<typeof DiagramRender>, "auto">;
-  readonly imageSupported: boolean;
-  readonly renderedAs: DisplayedAs;
+  readonly renderedAs: Representation;
   readonly image?: { readonly path: string; readonly widthPx: number; readonly heightPx: number };
   /** The diagram as text, for the renderer and as the fallback for an image. */
   readonly textPreview: string;
@@ -299,7 +258,6 @@ export interface DiagramExtensionApi {
 export interface DiagramExtensionDependencies {
   readonly renderer?: D2Renderer;
   readonly rasterizer?: SvgRasterizer;
-  readonly renderPreference?: (cwd: string) => RenderPreference | Promise<RenderPreference>;
 }
 
 /** Only `save` reaches the repository. Its presence is write intent even when malformed. */
@@ -389,8 +347,7 @@ function contentFor(
 
 function summaryFor(rendering: DiagramRendering): string {
   const named = rendering.title === undefined ? "the diagram" : `"${rendering.title}"`;
-  const as = DRAWN[rendering.image === undefined ? rendering.renderedAs : "image"];
-  return `Drew ${named} as ${as}. It is on the user's screen, so it is not repeated here.`;
+  return `Drew ${named}. It is on the user's screen, so it is not repeated here.`;
 }
 
 function outputsFor(rendering: DiagramRendering): Readonly<Record<string, string>> | undefined {
@@ -414,9 +371,6 @@ function outputsFor(rendering: DiagramRendering): Readonly<Record<string, string
 function detailsFor(
   parameters: DiagramParameters,
   rendering: DiagramRendering,
-  effectiveRender: DiagramToolDetails["effectiveRender"],
-  imageSupported: boolean,
-  notes: readonly string[],
 ): DiagramToolDetails {
   const outputs = outputsFor(rendering);
   return {
@@ -424,9 +378,7 @@ function detailsFor(
     ...(rendering.title === undefined ? {} : { title: rendering.title }),
     profile: rendering.profile,
     requested: parameters.render ?? "auto",
-    effectiveRender,
-    imageSupported,
-    renderedAs: rendering.image === undefined ? rendering.renderedAs : "image",
+    renderedAs: rendering.renderedAs,
     ...(rendering.image === undefined ? {} : { image: rendering.image }),
     textPreview: rendering.text,
     source: rendering.source,
@@ -436,7 +388,7 @@ function detailsFor(
     widthCells: rendering.widthCells,
     ...(rendering.d2Version === undefined ? {} : { d2Version: rendering.d2Version }),
     ...(outputs === undefined ? {} : { outputs }),
-    ...(notes.length === 0 ? {} : { notes }),
+    ...(rendering.notes.length === 0 ? {} : { notes: rendering.notes }),
   };
 }
 
@@ -446,19 +398,16 @@ function pathsFor(details: DiagramToolDetails): readonly string[] {
     .map(([, path]) => path);
 }
 
-function expandedLines(details: DiagramToolDetails): readonly string[] {
+function expandedLines(details: DiagramToolDetails, displayedAs: DisplayedAs): readonly string[] {
   const version = details.d2Version === undefined ? "" : `, D2 ${details.d2Version}`;
   const selection =
-    details.requested === "auto"
-      ? `Requested auto, resolved to ${details.effectiveRender}`
-      : `Requested ${details.requested}`;
+    details.requested === "auto" ? "Default view Unicode" : `Requested ${details.requested}`;
   const lines = [
-    `${selection}; drawn as ${DRAWN[details.renderedAs]}, profile ${details.profile}${version}`,
+    `${selection}; shown as ${DRAWN[displayedAs]}, profile ${details.profile}${version}`,
     ...pathsFor(details),
     ...(details.diagnostics ?? []).map(formatDiagnostic),
   ];
-  // The collapsed row already shows the source when that is what was drawn.
-  return details.renderedAs === "source" ? lines : [...lines, "", details.source];
+  return displayedAs === "source" ? lines : [...lines, "", details.source];
 }
 
 export function registerDiagramTools(
@@ -471,7 +420,6 @@ export function registerDiagramTools(
   }
   const renderer = dependencies.renderer ?? new D2Cli();
   const rasterizer = dependencies.rasterizer ?? new ResvgRasterizer();
-  const renderPreference = dependencies.renderPreference ?? (() => DEFAULT_RENDER_PREFERENCE);
   const display = primeDisplay();
 
   pi.registerTool<typeof DiagramParameters, DiagramToolDetails>({
@@ -494,52 +442,65 @@ export function registerDiagramTools(
         await display;
         drawnHere = displayLoaded();
       }
-      const effectiveRender =
-        parameters.render === undefined || parameters.render === "auto"
-          ? await renderPreference(context.cwd)
-          : parameters.render;
-      const imageSupported = drawnHere && imagesSupported() === true;
       const rendering = await renderDiagram(
         {
           source: parameters.source,
           title: parameters.title,
           profile: parameters.profile,
-          render: effectiveRender,
+          render: parameters.render,
           formats: parameters.formats,
           save: parameters.save,
           cwd: context.cwd,
-          images: imageSupported,
           signal,
         },
         renderer,
         rasterizer,
       );
-      const notes =
-        effectiveRender === "image" && !imageSupported
-          ? [...rendering.notes, IMAGE_UNAVAILABLE_WARNING]
-          : rendering.notes;
       return {
-        content: [{ type: "text", text: contentFor(rendering, drawnHere, notes) }],
-        details: detailsFor(parameters, rendering, effectiveRender, imageSupported, notes),
+        content: [{ type: "text", text: contentFor(rendering, drawnHere, rendering.notes) }],
+        details: detailsFor(parameters, rendering),
       };
     },
     renderResult(result, options, theme, context) {
       const details = result.details;
       const displayContext = displayContextFor(details, options.expanded, context);
-      const imageUnavailable =
-        details.effectiveRender === "image" &&
-        (!details.imageSupported || !displayContext.showImages || imagesSupported() !== true);
+      const wantsImage =
+        details.requested === "image" || (details.requested === "auto" && options.expanded);
+      const imageSupported =
+        wantsImage &&
+        details.image !== undefined &&
+        displayContext.showImages &&
+        imagesSupported() === true;
+
+      let imageWarning: string | undefined;
+      if (wantsImage && details.image !== undefined && !imageSupported) {
+        imageWarning = displayContext.showImages
+          ? IMAGE_UNAVAILABLE_WARNING
+          : "Inline images are disabled in this view.";
+      }
       const notes =
-        imageUnavailable && !details.notes?.includes(IMAGE_UNAVAILABLE_WARNING)
-          ? [...(details.notes ?? []), IMAGE_UNAVAILABLE_WARNING]
-          : (details.notes ?? []);
+        imageWarning === undefined || details.notes?.includes(imageWarning)
+          ? (details.notes ?? [])
+          : [...(details.notes ?? []), imageWarning];
+
+      let hint: string | undefined;
+      if (details.requested === "auto" && !options.expanded && details.image !== undefined) {
+        hint = "Ctrl+O: view PNG";
+      } else if (details.requested === "auto" && options.expanded && imageSupported) {
+        hint = "Ctrl+O: show Unicode";
+      } else if (details.requested === "image" && imageSupported) {
+        hint = options.expanded ? "Ctrl+O: fit image" : "Ctrl+O: zoom image";
+      }
+
       return renderDiagramResult(
         {
-          image: details.image,
+          image: imageSupported ? details.image : undefined,
           title: details.title,
           text: details.textPreview,
           notes,
-          details: expandedLines(details),
+          hint,
+          details: (shownImage) =>
+            expandedLines(details, shownImage ? "image" : details.renderedAs),
         },
         theme,
         displayContext,

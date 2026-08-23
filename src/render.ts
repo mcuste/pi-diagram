@@ -12,6 +12,7 @@ import { parseSafeSource, type SafeD2Source } from "./d2/preflight.js";
 import { type ProfileName, parseProfile, type RenderProfile } from "./d2/profiles.js";
 import {
   type D2Renderer,
+  type D2Svg,
   type D2Text,
   SourceFormatUnavailableError,
   type SupportedD2Version,
@@ -47,7 +48,6 @@ interface ParsedDiagramRequest {
   readonly title: SafeTitle | undefined;
   readonly profile: RenderProfile;
   readonly representation: Representation;
-  readonly showImage: boolean;
   readonly names: ArtifactNames | undefined;
   readonly target: ArtifactTarget | undefined;
   readonly signal: AbortSignal | undefined;
@@ -61,7 +61,6 @@ const REQUEST_KEYS: ReadonlySet<string> = new Set([
   "formats",
   "save",
   "cwd",
-  "images",
   "signal",
 ]);
 
@@ -90,10 +89,7 @@ export interface DiagramRendering {
   readonly notes: readonly string[];
 }
 
-/**
- * `image` and `auto` choose the text that goes with the image. Whether a terminal can show one is
- * only decided when the result is displayed, so both are always prepared.
- */
+/** Every request prepares Unicode, SVG, and PNG. */
 export function parseRepresentation(requested: unknown): Representation {
   switch (requested) {
     case undefined:
@@ -112,18 +108,6 @@ export function parseRepresentation(requested: unknown): Representation {
         },
       ]);
   }
-}
-
-function parseImages(raw: unknown): boolean {
-  if (raw === undefined) {
-    return false;
-  }
-  if (typeof raw === "boolean") {
-    return raw;
-  }
-  throw new DiagramSourceError("Diagram image setting must be a boolean.", [
-    { code: "D2_SOURCE", message: `Received ${describeUnknown(raw)}.` },
-  ]);
 }
 
 function parseSignal(raw: unknown): AbortSignal | undefined {
@@ -158,8 +142,7 @@ async function parseDiagramRequest(request: unknown): Promise<ParsedDiagramReque
   const source = parseSafeSource(normalized.text);
   const title = parseTitle(read("title"));
   const profile = parseProfile(read("profile"));
-  const requestedRender = read("render");
-  const representation = parseRepresentation(requestedRender);
+  const representation = parseRepresentation(read("render"));
   const save = read("save");
   const formats = read("formats");
   const names =
@@ -167,16 +150,12 @@ async function parseDiagramRequest(request: unknown): Promise<ParsedDiagramReque
       ? parseArtifactNames({ formats, save }, { title, hash: normalized.hash })
       : undefined;
   const target = names === undefined ? undefined : await parseArtifactTarget(read("cwd"), names);
-  const images = parseImages(read("images"));
   return {
     normalized,
     source,
     title,
     profile,
     representation,
-    showImage:
-      images &&
-      (requestedRender === undefined || requestedRender === "auto" || requestedRender === "image"),
     names,
     target,
     signal: parseSignal(read("signal")),
@@ -193,60 +172,58 @@ export async function renderDiagram(
   rasterizer: SvgRasterizer = new ResvgRasterizer(),
 ): Promise<DiagramRendering> {
   const parsed = await parseDiagramRequest(request);
-  const { names, normalized, profile, representation, showImage, signal, source, target, title } =
-    parsed;
+  const { names, normalized, profile, representation, signal, source, target, title } = parsed;
   throwIfCancelled(signal, "Drawing the diagram");
 
   const notes: string[] = [];
+  const savesSvg = names?.formats.includes("svg") === true;
   const savesPng = names?.formats.includes("png") === true;
-  const wantsText = representation !== "source" || names?.formats.includes("txt") === true;
-  const drawn = wantsText ? await tryRender(renderer, source, signal) : undefined;
+  const drawn = await tryRender(renderer, source, signal);
   const textFailure = drawn instanceof TextRenderUnavailableError ? drawn : undefined;
-  const text =
-    drawn === undefined || drawn instanceof TextRenderUnavailableError ? undefined : drawn.text;
+  const text = drawn instanceof TextRenderUnavailableError ? undefined : drawn.text;
 
-  const needsSvg = names?.formats.includes("svg") === true || savesPng;
-  let svg: Awaited<ReturnType<D2Renderer["renderSvg"]>> | undefined;
-  if (needsSvg || showImage) {
-    try {
-      svg = await renderer.renderSvg({ source, profile, signal });
-    } catch (error) {
-      if (!(error instanceof SvgRenderUnavailableError) || needsSvg) {
-        throw error;
-      }
-      notes.push(`${errorMessage(error)} The diagram is shown as text instead.`);
+  let svg: D2Svg | undefined;
+  try {
+    svg = await renderer.renderSvg({ source, profile, signal });
+  } catch (error) {
+    if (!(error instanceof SvgRenderUnavailableError) || savesSvg || savesPng) {
+      throw error;
     }
+    notes.push(`${errorMessage(error)} The SVG and PNG could not be generated.`);
   }
 
   const raster =
-    svg === undefined || (!showImage && !savesPng)
-      ? undefined
-      : await tryRasterize(rasterizer, svg.svg, signal, notes);
+    svg === undefined ? undefined : await tryRasterize(rasterizer, svg.svg, signal, notes);
 
   const contents = new Map<ArtifactFormat, string | Uint8Array>();
   if (target !== undefined && names !== undefined) {
-    contents.set("source", await sourceToSave(renderer, source, signal));
-    if (svg !== undefined) {
+    if (names.formats.includes("source")) {
+      contents.set("source", await sourceToSave(renderer, source, signal));
+    }
+    if (names.formats.includes("svg") && svg !== undefined) {
       contents.set("svg", `${svg.svg}\n`);
     }
-    if (raster !== undefined) {
-      contents.set("png", raster.png);
-    } else if (savesPng) {
-      notes.push("No .png was written, because the diagram could not be drawn as an image.");
+    if (names.formats.includes("png")) {
+      if (raster === undefined) {
+        notes.push("No .png was written, because the PNG could not be generated.");
+      } else {
+        contents.set("png", raster.png);
+      }
     }
-    if (text !== undefined) {
-      contents.set("txt", `${text}\n`);
-    } else if (names.formats.includes("txt")) {
-      notes.push("No .txt was written, because D2 could not draw this diagram as text.");
+    if (names.formats.includes("txt")) {
+      if (text === undefined) {
+        notes.push("No .txt was written, because D2 could not draw this diagram as text.");
+      } else {
+        contents.set("txt", `${text}\n`);
+      }
     }
   }
 
   const image =
-    raster === undefined || !showImage
+    raster === undefined
       ? undefined
       : await keepImage(raster, title, normalized.hash, notes, signal);
-  const willWrite =
-    names !== undefined && [...names.formats].some((format) => contents.has(format));
+  const willWrite = target !== undefined && contents.size > 0;
 
   let prepared: PreparedDiagram;
   if (textFailure !== undefined && representation !== "source") {
@@ -324,7 +301,7 @@ async function sourceToSave(
   }
 }
 
-/** An image that cannot be drawn is a display fallback, not a failure the model should correct. */
+/** PNG failure leaves text usable. */
 async function tryRasterize(
   rasterizer: SvgRasterizer,
   svg: Parameters<SvgRasterizer["rasterize"]>[0]["svg"],
@@ -344,7 +321,7 @@ async function tryRasterize(
     if (!(error instanceof ImageRenderUnavailableError)) {
       throw error;
     }
-    notes.push(`${error.message} The diagram is shown as text instead.`);
+    notes.push(`${error.message} The PNG could not be generated.`);
     return undefined;
   }
 }

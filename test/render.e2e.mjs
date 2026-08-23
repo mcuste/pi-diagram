@@ -377,10 +377,7 @@ test("the tool the hosts load saves through the real CLI", async () => {
 });
 
 test("a real diagram is drawn as a real PNG, with its own fonts", async () => {
-  const rendering = await renderDiagram(
-    { source: await fixture("erd.d2"), images: true },
-    new D2Cli(),
-  );
+  const rendering = await renderDiagram({ source: await fixture("erd.d2") }, new D2Cli());
 
   const image = rendering.image;
   assert.ok(image, "no image was produced");
@@ -404,7 +401,7 @@ test("a real diagram is drawn as a real PNG, with its own fonts", async () => {
 
 test("labels the diagram's own font cannot draw are reported, not silently dropped", async () => {
   const rendering = await renderDiagram(
-    { source: 'a: "注文"\na -> b', images: true, render: "image" },
+    { source: 'a: "注文"\na -> b', render: "image" },
     new D2Cli(),
   );
   assert.ok(rendering.image, "no image was produced");
@@ -418,7 +415,6 @@ test("a saved png holds the same image the terminal was given", async () => {
       {
         source: await fixture("flow.d2"),
         title: "Flow",
-        images: true,
         formats: ["source", "svg", "png"],
         save: { dir: "docs/diagrams" },
         cwd: root,

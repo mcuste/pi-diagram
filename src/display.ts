@@ -13,7 +13,6 @@ import { parseRenderedPng } from "./raster.js";
 
 const PREVIEW_MAX_WIDTH_CELLS = 60;
 const PREVIEW_MAX_HEIGHT_CELLS = 18;
-const ZOOM_MAX_HEIGHT_CELLS = 60;
 const UNBOUNDED_WIDTH_CELLS = Number.MAX_SAFE_INTEGER;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
@@ -193,47 +192,58 @@ export function renderDiagramResult(
   const line = (text: string): void => {
     container.addChild(new module.Text(theme.fg("toolOutput", text), 0, 0));
   };
+  const hint = (text: string): void => {
+    container.addChild(new module.Text(theme.fg("muted", text), 0, 0));
+  };
   const image = drawable(module, view.image, context) ? view.image : undefined;
-  const url = image === undefined ? undefined : openable(module, image);
+  let picture: Component | undefined;
+  if (image !== undefined) {
+    try {
+      picture = new module.Image(
+        read(image, context),
+        "image/png",
+        { fallbackColor: (text: string) => theme.fg("toolOutput", text) },
+        context.expanded
+          ? {
+              maxWidthCells: UNBOUNDED_WIDTH_CELLS,
+              maxHeightCells: UNBOUNDED_WIDTH_CELLS,
+              filename: image.path,
+            }
+          : {
+              maxWidthCells: PREVIEW_MAX_WIDTH_CELLS,
+              maxHeightCells: PREVIEW_MAX_HEIGHT_CELLS,
+              filename: image.path,
+            },
+        { widthPx: image.widthPx, heightPx: image.heightPx },
+      );
+    } catch {
+      // The picture is gone from the temp store, so show the text instead.
+    }
+  }
+
+  const shownImage = picture !== undefined;
+  const url = shownImage && image !== undefined ? openable(module, image) : undefined;
   if (view.title !== undefined) {
     line(url === undefined ? view.title : module.hyperlink(view.title, url));
   }
 
-  if (image === undefined) {
+  if (picture === undefined) {
     line(view.text);
+    if (view.hint !== undefined && image === undefined) {
+      hint(view.hint);
+    }
   } else {
-    try {
-      container.addChild(
-        new module.Image(
-          read(image, context),
-          "image/png",
-          { fallbackColor: (text: string) => theme.fg("toolOutput", text) },
-          {
-            maxWidthCells: context.expanded ? UNBOUNDED_WIDTH_CELLS : PREVIEW_MAX_WIDTH_CELLS,
-            maxHeightCells: context.expanded ? ZOOM_MAX_HEIGHT_CELLS : PREVIEW_MAX_HEIGHT_CELLS,
-            filename: image.path,
-          },
-          { widthPx: image.widthPx, heightPx: image.heightPx },
-        ),
-      );
-      if (view.title === undefined && url !== undefined) {
-        const name = module.hyperlink(basename(image.path), url);
-        container.addChild(new module.Text(theme.fg("muted", name), 0, 0));
-      }
-      container.addChild(
-        new module.Text(
-          theme.fg("muted", context.expanded ? "Ctrl+O: fit image" : "Ctrl+O: zoom image"),
-          0,
-          0,
-        ),
-      );
-    } catch {
-      // The picture is gone from the temp store, so show the text instead.
-      line(view.text);
+    container.addChild(picture);
+    if (view.title === undefined && url !== undefined && image !== undefined) {
+      const name = module.hyperlink(basename(image.path), url);
+      container.addChild(new module.Text(theme.fg("muted", name), 0, 0));
+    }
+    if (view.hint !== undefined) {
+      hint(view.hint);
     }
   }
 
-  const footer = [...view.notes, ...(context.expanded ? view.details : [])];
+  const footer = [...view.notes, ...(context.expanded ? view.details(shownImage) : [])];
   if (footer.length > 0) {
     line(footer.join("\n"));
   }
@@ -267,8 +277,9 @@ export interface DiagramView {
   /** Drawn when there is no image, or when the one there is cannot be shown. */
   readonly text: string;
   readonly notes: readonly string[];
+  readonly hint: string | undefined;
   /** Render mode, paths, diagnostics, and source. Shown only in the expanded row. */
-  readonly details: readonly string[];
+  readonly details: (imageShown: boolean) => readonly string[];
 }
 
 /** Reads the image once per result row: the host calls the renderer again on every redraw. */

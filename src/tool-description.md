@@ -30,3 +30,5 @@ Do not use `@` imports, `icon`, `link`, `shape: image`, or `|...|` labels. Do no
 Use 5 to 15 nodes. The `dependency` profile can use up to 25. Split larger diagrams.
 
 Use `save` only when the user asks to keep the diagram.
+
+Leave `render` and `formats` unset unless the user asks for another method. The default shows Unicode, opens a PNG with Ctrl+O, and saves editable D2 plus SVG. Embed or copy the SVG into documents.

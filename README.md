@@ -158,69 +158,47 @@ Every profile also sets a dark theme, so a saved SVG adapts to dark mode.
 Only the picture changes. D2 draws text in character cells, so every profile gives the same box
 drawing.
 
-## Images in the terminal
+## Unicode and PNG views
 
-Unicode is the default. To persist image rendering for one repository, create
-`.pi/pi-diagram.json` for Pi or `.omp/pi-diagram.json` for OMP:
+Every call prepares Unicode, SVG, and PNG from the same D2 source. The collapsed result shows
+Unicode. Press `Ctrl+O`, the host's default tool-expansion shortcut, to replace it with a PNG that
+fills the terminal width. Tall diagrams continue below the viewport. Press it again to return to
+Unicode.
 
-```json
-{
-  "render": "image"
-}
-```
+If the terminal or harness has no image protocol, the collapsed result stays unchanged. Pressing
+`Ctrl+O` keeps the Unicode view and reports `This terminal cannot display inline images.` A
+multiplexer between the terminal and agent must forward the protocol. tmux needs
+`allow-passthrough`, and herdr needs `experimental.kitty_graphics`.
 
-For every repository, use `~/.pi/agent/pi-diagram.json` or
-`~/.omp/agent/pi-diagram.json`. `PI_CODING_AGENT_DIR` replaces those agent directories when set.
+Per-call overrides remain available when the user requests another method:
 
-For one run, use the host extension flag or environment variable:
+- `render: "image"` shows a compact PNG first, then zooms it with `Ctrl+O`.
+- `render: "unicode"` keeps Unicode in both views.
+- `render: "source"` shows the D2 source.
 
-```sh
-pi --diagram-render image
-omp --diagram-render image
-PI_DIAGRAM_RENDER=image pi
-```
+The PNG never enters the model's context. It is written to a private temporary directory and read
+when the expanded row is displayed.
 
-Precedence is command-line flag, `PI_DIAGRAM_RENDER`, project configuration, global
-configuration, then the Unicode default.
-Configuration files are read before each diagram, so changes apply without restarting the host.
-
-On Kitty, Ghostty, WezTerm, iTerm2, and anything else that speaks a terminal image protocol,
-`auto` then shows the drawn diagram. At host startup the extension uses the host's TUI library to
-detect whether the terminal and its harness support an image protocol. If image rendering is
-disabled or unavailable, the call shows Unicode and reports `Image support is unavailable;
-generated as Unicode.` Explicit `render: "unicode"` never attempts an image.
-
-A terminal with no image protocol is never sent one. Note that a multiplexer between the terminal
-and the agent has to forward the protocol: tmux needs `allow-passthrough`, and herdr needs
-`experimental.kitty_graphics`.
-
-The image never enters the model's context. It is written to a private temporary directory and
-read back when the row is displayed.
-
-The collapsed row is a 60 by 18 cell preview. Press `Ctrl+O`, the default tool-expansion
-shortcut, to zoom the image to the available terminal width and up to 60 rows. Press it again to
-return to the preview.
-
-Where the terminal supports OSC 8 hyperlinks, the title above the diagram links to the full image
+Where the terminal supports OSC 8 hyperlinks, the title above the expanded PNG links to the image
 file. A diagram with no title shows the linked file name under the image instead. Open that link
 to pan or zoom beyond the terminal view. Ghostty, Kitty, WezTerm, and iTerm2 support these links,
 some of them on a modified click.
 
 D2 exports PNG by driving a headless browser it downloads on first use, which this tool will not
-do during a call. Instead the SVG it already produces is rasterized locally by
-[resvg](https://github.com/yisibl/resvg-js), which needs no browser and no network. Labels are
-drawn with the fonts the SVG carries, so the picture matches the boxes D2 measured. Characters
-those fonts do not cover, such as CJK, fall back to the fonts on the machine and say so.
+do during a call. Instead the SVG is rasterized locally by
+[resvg](https://github.com/yisibl/resvg-js), which needs no browser and no network. Labels use the
+fonts in the SVG. Characters those fonts do not cover, such as CJK, fall back to fonts on the
+machine and produce a note.
 
 ## What the model gets back
 
-In a terminal this extension draws the row, so the model reads one line: `Drew "Request path" as
-an image. It is on the user's screen, so it is not repeated here.` Saved paths and notes come with
+In a terminal this extension draws the row, so the model reads one line: `Drew "Request path". It
+is on the user's screen, so it is not repeated here.` Saved paths and generation notes come with
 it, so a conversation full of diagrams costs about what a conversation of text costs. Print, RPC,
-and JSON modes have no row to draw, so there the diagram is the result text.
+and JSON modes have no row to draw, so there the Unicode diagram is the result text.
 
-Expanding an image row zooms it and adds the render mode, the profile, the D2 version, the file
-paths, diagnostics, and the source.
+Expanding a result replaces Unicode with PNG where supported and adds the display mode, profile,
+D2 version, file paths, diagnostics, and source.
 
 ## Where files go
 
@@ -231,7 +209,7 @@ unless it is asked for, and the repository is never the default:
 | --- | --- | --- |
 | `{ source }` | none, the diagram is only in the transcript | read |
 | `{ source, formats: ["svg"] }` | an SVG in a private temp directory, path returned | read |
-| `{ source, title, save: { dir: "docs/diagrams" } }` | copied into the repository | write, prompts with the exact files |
+| `{ source, title, save: { dir: "docs/diagrams" } }` | editable D2 plus an embeddable SVG | write, prompts with the exact files |
 
 `save.dir` has no default. There is no directory convention that holds across repositories, so
 the destination has to be named. Only pass `save` when the user asked to keep the diagram. A

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -8,12 +8,7 @@ import { promisify } from "node:util";
 import { Value } from "typebox/value";
 import { PROFILE_NAMES } from "../dist/d2/profiles.js";
 import { TextRenderUnavailableError } from "../dist/d2/runner.js";
-import {
-  parseRenderPreference,
-  primeDiagramDescription,
-  registerDiagramPreference,
-  registerDiagramTools,
-} from "../dist/tools.js";
+import { primeDiagramDescription, registerDiagramTools } from "../dist/tools.js";
 import { png } from "./fixtures/png.mjs";
 
 const UNICODE_DIAGRAM = "┌────┐\n│ a  │\n└────┘";
@@ -23,7 +18,7 @@ const TOOL_DESCRIPTION = (
 
 await primeDiagramDescription();
 
-function register(renderer, renderPreference) {
+function register(renderer, rasterizer) {
   const tools = new Map();
   registerDiagramTools(
     {
@@ -33,7 +28,7 @@ function register(renderer, renderPreference) {
     },
     {
       ...(renderer === undefined ? {} : { renderer }),
-      ...(renderPreference === undefined ? {} : { renderPreference }),
+      ...(rasterizer === undefined ? {} : { rasterizer }),
     },
   );
   return tools.get("diagram");
@@ -71,60 +66,6 @@ const parameters = diagram.parameters;
 function accepts(args) {
   return Value.Check(parameters, args);
 }
-
-test("the render preference defaults to Unicode and accepts image opt-in", () => {
-  assert.equal(parseRenderPreference(undefined), "unicode");
-  assert.equal(parseRenderPreference("unicode"), "unicode");
-  assert.equal(parseRenderPreference("image"), "image");
-  assert.throws(() => parseRenderPreference("ascii"), /unicode.*image/);
-});
-
-test("the extension flag supplies the preference at execution time", async () => {
-  const flags = new Map();
-  const preference = await registerDiagramPreference(
-    {
-      registerFlag(name, options) {
-        flags.set(name, options.default);
-      },
-      getFlag(name) {
-        return flags.get(name);
-      },
-    },
-    { envPreference: "unicode" },
-  );
-  assert.equal(await preference(), "unicode");
-  flags.set("diagram-render", "image");
-  assert.equal(await preference(), "image");
-});
-
-test("project configuration added during a session applies to the next call", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-diagram-live-config-"));
-  const cwd = join(root, "project");
-  const agentDir = join(root, "agent");
-  const flags = new Map();
-  try {
-    await mkdir(cwd, { recursive: true });
-    await mkdir(agentDir, { recursive: true });
-    const preference = await registerDiagramPreference(
-      {
-        registerFlag(name, options) {
-          flags.set(name, options.default);
-        },
-        getFlag(name) {
-          return flags.get(name);
-        },
-      },
-      { agentDir, host: "pi", envPreference: undefined },
-    );
-    assert.equal(await preference(cwd), "unicode");
-
-    await mkdir(join(cwd, ".pi"), { recursive: true });
-    await writeFile(join(cwd, ".pi", "pi-diagram.json"), '{"render":"image"}\n');
-    assert.equal(await preference(cwd), "image");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
 
 test("only a repository write asks for approval", () => {
   assert.equal(diagram.approval({ source: "a -> b" }), "read");
@@ -236,22 +177,23 @@ test("the diagram alone is returned when there is no title", async () => {
   assert.equal(result.content[0].text, UNICODE_DIAGRAM);
 });
 
-test("details describe the render and carry the diagram for the renderer", async () => {
-  const result = await run(register(createRenderer()), {
+test("details carry Unicode and PNG for the result renderer", async () => {
+  const result = await run(register(createRenderer(), createRasterizer()), {
     source: "a -> b",
     title: "Request path",
     profile: "architecture",
     render: "auto",
   });
-  const { sourceHash, ...rest } = result.details;
+  const { image, sourceHash, ...rest } = result.details;
   assert.match(sourceHash, /^[0-9a-f]{64}$/);
+  assert.ok(image.path.endsWith(".png"));
+  assert.equal(image.widthPx, 800);
+  assert.equal(image.heightPx, 600);
   assert.deepEqual(rest, {
     language: "d2",
     title: "Request path",
     profile: "architecture",
     requested: "auto",
-    effectiveRender: "unicode",
-    imageSupported: false,
     renderedAs: "unicode",
     textPreview: UNICODE_DIAGRAM,
     source: "a -> b",
@@ -261,11 +203,11 @@ test("details describe the render and carry the diagram for the renderer", async
   });
 });
 
-test("Unicode failure is never replaced with ASCII", async () => {
+test("Unicode failure keeps PNG and falls back to source, never ASCII", async () => {
   const renderer = createRenderer(new TextRenderUnavailableError("beta renderer"));
-  await assert.rejects(run(register(renderer), { source: "a -> b" }), {
-    name: "TextRenderUnavailableError",
-  });
+  const result = await run(register(renderer, createRasterizer()), { source: "a -> b" });
+  assert.equal(result.details.renderedAs, "source");
+  assert.ok(result.details.image);
   assert.equal(renderer.calls.length, 1);
   assert.equal(renderer.calls[0].asciiMode, "extended");
 });
@@ -281,42 +223,26 @@ test("unsafe source is refused before D2 is started", async () => {
 
 const PNG_BYTES = png();
 
-function createRasterizer() {
+function createRasterizer({ widthPx = 800, heightPx = 600 } = {}) {
   return {
     rasterize() {
-      return Promise.resolve({ png: PNG_BYTES, widthPx: 800, heightPx: 600, systemFonts: false });
+      return Promise.resolve({
+        png: png({ width: widthPx, height: heightPx }),
+        widthPx,
+        heightPx,
+        systemFonts: false,
+      });
     },
   };
 }
 
-function registerWithRasterizer(renderPreference) {
-  const tools = new Map();
-  registerDiagramTools(
-    {
-      registerTool(definition) {
-        tools.set(definition.name, definition);
-      },
-    },
-    {
-      renderer: createRenderer(),
-      rasterizer: createRasterizer(),
-      ...(renderPreference === undefined ? {} : { renderPreference }),
-    },
-  );
-  return tools.get("diagram");
-}
-
-function registerWithImages() {
-  return registerWithRasterizer(() => "image");
+function registerWithRasterizer() {
+  return register(createRenderer(), createRasterizer());
 }
 
 const theme = { fg: (_color, text) => text };
 
-/**
- * Every image test sets the terminal capabilities instead of inheriting them, because whether an
- * image is drawn at all depends on the terminal running the suite, and a CI runner has none. This
- * is the same pi-tui copy display.ts uses.
- */
+/** Prevent host terminal capabilities from making image tests environment-dependent. */
 async function withCapabilities(overrides, body) {
   const tui = await import("@earendil-works/pi-tui");
   const previous = tui.getCapabilities();
@@ -328,7 +254,6 @@ async function withCapabilities(overrides, body) {
   }
 }
 
-/** An image is only produced for a terminal, so these rows need a TUI call. */
 function drawInTui(diagram, parameters) {
   return diagram.execute("call-1", parameters, undefined, () => {}, {
     cwd: process.cwd(),
@@ -358,91 +283,46 @@ test("the waiting row names the diagram, not its source", async () => {
   assert.equal(empty.includes("a -> b"), false);
 });
 
-test("an image is produced only in a terminal, since nothing else can show one", async () => {
-  const { primeDisplay } = await import("../dist/display.js");
-  await primeDisplay();
-  const tool = registerWithImages();
-  await withCapabilities({ images: "kitty" }, async () => {
-    for (const [mode, expected] of [
-      ["tui", "image"],
-      ["print", "unicode"],
-      ["rpc", "unicode"],
-      [undefined, "unicode"],
-    ]) {
-      const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
-        cwd: process.cwd(),
-        mode,
-      });
-      assert.equal(result.details.renderedAs, expected, String(mode));
-      assert.equal(result.details.image === undefined, expected !== "image", String(mode));
-    }
-  });
+test("every host mode receives Unicode, SVG, and PNG", async () => {
+  const tool = registerWithRasterizer();
+  for (const mode of ["tui", "print", "rpc", undefined]) {
+    const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
+      cwd: process.cwd(),
+      mode,
+    });
+    assert.equal(result.details.renderedAs, "unicode", String(mode));
+    assert.ok(result.details.image?.path.endsWith(".png"), String(mode));
+  }
 });
 
-test("the default preference stays Unicode even where images are supported", async () => {
+test("the collapsed default stays Unicode where images are supported", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
   const tool = registerWithRasterizer();
   await withCapabilities({ images: "kitty" }, async () => {
     const result = await drawInTui(tool, { source: "a -> b" });
-    assert.equal(result.details.effectiveRender, "unicode");
-    assert.equal(result.details.image, undefined);
-    assert.equal(result.details.notes, undefined);
+    const drawn = tool
+      .renderResult(result, { expanded: false }, theme, { showImages: true, state: {} })
+      .render(120)
+      .join("\n");
+    assert.match(drawn, /┌/);
+    assert.equal(drawn.includes("\x1b_G"), false);
+    assert.match(drawn, /Ctrl\+O: view PNG/);
   });
 });
 
-test("a project image preference produces an inline image without a request override", async () => {
-  const { primeDisplay } = await import("../dist/display.js");
-  await primeDisplay();
-  const root = await mkdtemp(join(tmpdir(), "pi-diagram-image-config-"));
-  const cwd = join(root, "project");
-  const flags = new Map();
-  try {
-    await mkdir(join(cwd, ".pi"), { recursive: true });
-    await writeFile(join(cwd, ".pi", "pi-diagram.json"), '{"render":"image"}\n');
-    const preference = await registerDiagramPreference(
-      {
-        registerFlag(name, options) {
-          flags.set(name, options.default);
-        },
-        getFlag(name) {
-          return flags.get(name);
-        },
-      },
-      { agentDir: join(root, "agent"), host: "pi", envPreference: undefined },
-    );
-    const tool = registerWithRasterizer(preference);
-
-    await withCapabilities({ images: "kitty" }, async () => {
-      const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
-        cwd,
-        mode: "tui",
-      });
-      assert.equal(result.details.effectiveRender, "image");
-      assert.equal(result.details.renderedAs, "image");
-      assert.ok(result.details.image);
-
-      const rows = tool
-        .renderResult(result, { expanded: false }, theme, { showImages: true, state: {} })
-        .render(120);
-      assert.ok(
-        rows.some((row) => row.includes("\x1b_G")),
-        rows.join("\n"),
-      );
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("an explicit image request overrides the Unicode preference", async () => {
+test("an explicit image request shows a compact image", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
   const tool = registerWithRasterizer();
   await withCapabilities({ images: "kitty" }, async () => {
     const result = await drawInTui(tool, { source: "a -> b", render: "image" });
-    assert.equal(result.details.effectiveRender, "image");
-    assert.ok(result.details.image);
+    const drawn = tool
+      .renderResult(result, { expanded: false }, theme, { showImages: true, state: {} })
+      .render(120)
+      .join("\n");
+    assert.ok(drawn.includes("\x1b_G"), drawn);
+    assert.match(drawn, /Ctrl\+O: zoom image/);
   });
 });
 
@@ -468,8 +348,7 @@ test("startup detects host image rendering before the first TUI tool call", asyn
     const script = [
       `import piDiagram from ${JSON.stringify(new URL("../dist/index.js", import.meta.url).href)};`,
       "const tools = new Map();",
-      'const flags = new Map([["diagram-render", "unicode"]]);',
-      "await piDiagram({ registerTool(tool) { tools.set(tool.name, tool); }, registerFlag(name, options) { flags.set(name, options.default); }, getFlag(name) { return flags.get(name); } });",
+      "await piDiagram({ registerTool(tool) { tools.set(tool.name, tool); } });",
       'if (!tools.has("diagram")) throw new Error("startup did not register the tool");',
     ].join("\n");
     const entry = join(root, "startup.mjs");
@@ -484,7 +363,7 @@ test("startup detects host image rendering before the first TUI tool call", asyn
 test("neither the image nor the diagram travels in the content the model reads", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
-  const tool = registerWithImages();
+  const tool = registerWithRasterizer();
   const result = await withCapabilities({ images: "kitty" }, () =>
     drawInTui(tool, { source: "a -> b" }),
   );
@@ -495,12 +374,12 @@ test("neither the image nor the diagram travels in the content the model reads",
   const text = result.content[0].text;
   assert.equal(text.includes(PNG_BYTES.toString("base64")), false);
   assert.doesNotMatch(text, /┌/);
-  assert.match(text, /^Drew the diagram as an image\./);
+  assert.match(text, /^Drew the diagram\./);
   assert.match(text, /not repeated here/);
 });
 
 test("the diagram is in the content when the host has to print it", async () => {
-  const tool = registerWithImages();
+  const tool = registerWithRasterizer();
   for (const mode of ["print", "rpc", undefined]) {
     const result = await tool.execute("call-1", { source: "a -> b" }, undefined, () => {}, {
       cwd: process.cwd(),
@@ -510,108 +389,138 @@ test("the diagram is in the content when the host has to print it", async () => 
   }
 });
 
-test("a diagram with no image is drawn here as text", async () => {
+test("Ctrl+O replaces Unicode with the PNG zoom and adds details", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
-  const tool = register(createRenderer());
-  const result = await run(tool, { source: "a -> b", title: "Request path" });
-  const component = tool.renderResult(result, { expanded: false }, theme, {
-    showImages: true,
-    state: {},
-  });
-  const drawn = component.render(120).join("\n");
-  assert.match(drawn, /Request path/);
-  assert.match(drawn, /┌/);
-});
-
-test("the expanded row adds the render mode, the paths, and the source", async () => {
-  const { primeDisplay } = await import("../dist/display.js");
-  await primeDisplay();
-  const tool = register(createRenderer());
-  const result = await run(tool, { source: "a -> b" });
-  const context = { showImages: true, state: {} };
-
-  const collapsed = tool
-    .renderResult(result, { expanded: false }, theme, context)
-    .render(120)
-    .join("\n");
-  assert.doesNotMatch(collapsed, /a -> b/);
-
-  const expanded = tool
-    .renderResult(result, { expanded: true }, theme, context)
-    .render(120)
-    .join("\n");
-  assert.match(
-    expanded,
-    /Requested auto, resolved to unicode; drawn as box drawing, profile explain, D2 v0\.8\.1-HEAD/,
-  );
-  assert.match(expanded, /a -> b/);
-});
-
-test("an image is shown as a component, and the text takes over when images are off", async () => {
-  const { primeDisplay } = await import("../dist/display.js");
-  await primeDisplay();
-  const tool = registerWithImages();
-  const result = await withCapabilities({ images: "kitty" }, () =>
-    drawInTui(tool, { source: "a -> b" }),
-  );
-
-  const component = tool.renderResult(result, { expanded: false }, theme, {
-    showImages: true,
-    state: {},
-  });
-  assert.equal(typeof component.render, "function");
-  assert.ok(component.render(120).length > 0);
-
-  const off = tool
-    .renderResult(result, { expanded: false }, theme, { showImages: false, state: {} })
-    .render(120)
-    .join("\n");
-  assert.match(off, /┌/);
-  assert.match(off, /Image support is unavailable; generated as Unicode\./);
-});
-
-test("expanding an image row zooms it to the terminal width", async () => {
-  const { primeDisplay } = await import("../dist/display.js");
-  await primeDisplay();
-  const tool = registerWithImages();
-
+  const tool = registerWithRasterizer();
   await withCapabilities({ images: "kitty" }, async () => {
     const result = await drawInTui(tool, { source: "a -> b" });
     const context = { showImages: true, state: {} };
-    const draw = (expanded) =>
-      tool.renderResult(result, { expanded }, theme, context).render(120).join("\n");
-    const size = (drawn) => {
-      const command = drawn.split("\n").find((line) => line.includes("\x1b_G"));
-      assert.ok(command, drawn);
-      return {
-        columns: Number(/(?:^|,)c=(\d+)/.exec(command)?.[1]),
-        rows: Number(/(?:^|,)r=(\d+)/.exec(command)?.[1]),
-      };
-    };
+    const collapsed = tool
+      .renderResult(result, { expanded: false }, theme, context)
+      .render(120)
+      .join("\n");
+    assert.match(collapsed, /┌/);
+    assert.equal(collapsed.includes("\x1b_G"), false);
+    assert.match(collapsed, /Ctrl\+O: view PNG/);
+    assert.doesNotMatch(collapsed, /a -> b/);
 
-    const collapsed = draw(false);
-    const expanded = draw(true);
-    const preview = size(collapsed);
-    const zoomed = size(expanded);
-    assert.ok(zoomed.columns > preview.columns, `${preview.columns} -> ${zoomed.columns}`);
-    assert.ok(zoomed.rows > preview.rows, `${preview.rows} -> ${zoomed.rows}`);
-    assert.match(collapsed, /Ctrl\+O: zoom image/);
-    assert.match(expanded, /Ctrl\+O: fit image/);
+    const expanded = tool
+      .renderResult(result, { expanded: true }, theme, context)
+      .render(120)
+      .join("\n");
+    assert.ok(expanded.includes("\x1b_G"), expanded);
+    assert.match(expanded, /Ctrl\+O: show Unicode/);
+    assert.match(
+      expanded,
+      /Default view Unicode; shown as an image, profile explain, D2 v0\.8\.1-HEAD/,
+    );
+    assert.match(expanded, /a -> b/);
+  });
+});
+
+test("explicit render modes keep their selected display across expansion", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const tool = registerWithRasterizer();
+
+  await withCapabilities({ images: "kitty" }, async () => {
+    for (const [render, expected] of [
+      ["unicode", { image: false, label: "shown as box drawing", hint: undefined }],
+      ["source", { image: false, label: "shown as D2 source", hint: undefined }],
+      ["image", { image: true, label: "shown as an image", hint: "Ctrl+O: fit image" }],
+    ]) {
+      const result = await drawInTui(tool, { source: "a -> b", render });
+      const drawn = tool
+        .renderResult(result, { expanded: true }, theme, { showImages: true, state: {} })
+        .render(120)
+        .join("\n");
+      assert.equal(drawn.includes("\x1b_G"), expected.image, render);
+      assert.match(drawn, new RegExp(expected.label), render);
+      if (expected.hint === undefined) {
+        assert.doesNotMatch(drawn, /Ctrl\+O:/, render);
+      } else {
+        assert.equal(drawn.includes(expected.hint), true, render);
+      }
+    }
+  });
+});
+
+test("expanded tall PNGs fill the terminal width", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const tool = register(createRenderer(), createRasterizer({ heightPx: 2400 }));
+
+  await withCapabilities({ images: "kitty" }, async () => {
+    const result = await drawInTui(tool, { source: "a -> b" });
+    const expanded = tool
+      .renderResult(result, { expanded: true }, theme, { showImages: true, state: {} })
+      .render(120)
+      .join("\n");
+    const command = expanded.split("\n").find((line) => line.includes("\x1b_G"));
+    assert.ok(command, expanded);
+    assert.match(command, /(?:^|,)c=118(?:,|;)/);
+    assert.match(command, /(?:^|,)r=177(?:,|;)/);
+  });
+});
+
+test("an explicit image request falls back when inline images are disabled", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const tool = registerWithRasterizer();
+  const result = await drawInTui(tool, { source: "a -> b", render: "image" });
+
+  await withCapabilities({ images: "kitty" }, () => {
+    const shown = tool
+      .renderResult(result, { expanded: false }, theme, { showImages: true, state: {} })
+      .render(120)
+      .join("\n");
+    assert.ok(shown.includes("\x1b_G"), shown);
+
+    const disabled = tool
+      .renderResult(result, { expanded: false }, theme, { showImages: false, state: {} })
+      .render(120)
+      .join("\n");
+    assert.match(disabled, /┌/);
+    assert.match(disabled, /Inline images are disabled in this view\./);
+  });
+});
+
+test("a missing PNG falls back to Unicode without image details or controls", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const tool = registerWithRasterizer();
+  const result = await drawInTui(tool, {
+    source: "a -> b",
+    title: "Request path",
+    render: "image",
+  });
+  await unlink(result.details.image.path);
+
+  await withCapabilities({ images: "kitty", hyperlinks: true }, () => {
+    const drawn = tool
+      .renderResult(result, { expanded: true }, theme, { showImages: true, state: {} })
+      .render(120)
+      .join("\n");
+    assert.match(drawn, /┌/);
+    assert.equal(drawn.includes("\x1b_G"), false);
+    assert.equal(drawn.includes("\x1b]8;"), false);
+    assert.doesNotMatch(drawn, /shown as an image|Ctrl\+O:/);
+    assert.match(drawn, /Requested image; shown as box drawing/);
   });
 });
 
 test("an OMP renderer argument does not disable a supported image", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
-  const tool = registerWithImages();
+  const tool = registerWithRasterizer();
   const result = await withCapabilities({ images: "kitty" }, () =>
     drawInTui(tool, { source: "a -> b" }),
   );
 
   await withCapabilities({ images: "kitty" }, () => {
     const rows = tool
-      .renderResult(result, { expanded: false }, theme, { source: "a -> b" })
+      .renderResult(result, { expanded: true }, theme, { source: "a -> b" })
       .render(120);
     assert.ok(
       rows.some((row) => row.includes("\x1b_G")),
@@ -620,45 +529,38 @@ test("an OMP renderer argument does not disable a supported image", async () => 
   });
 });
 
-test("a terminal with no image protocol gets the text, not a filename", async () => {
+test("unsupported terminals report the PNG limitation only after Ctrl+O", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
-  const tool = registerWithImages();
-  const result = await withCapabilities({ images: "kitty" }, () =>
-    drawInTui(tool, { source: "a -> b" }),
-  );
+  const tool = registerWithRasterizer();
+  const result = await drawInTui(tool, { source: "a -> b" });
+  assert.ok(result.details.image);
+  assert.equal(result.details.notes, undefined);
 
   await withCapabilities({ images: null }, () => {
-    const drawn = tool
-      .renderResult(result, { expanded: false }, theme, { showImages: true, state: {} })
+    const context = { showImages: true, state: {} };
+    const collapsed = tool
+      .renderResult(result, { expanded: false }, theme, context)
       .render(120)
       .join("\n");
-    assert.match(drawn, /┌/);
-    assert.doesNotMatch(drawn, /\.png/);
-    assert.match(drawn, /Image support is unavailable; generated as Unicode\./);
-  });
-  // The same result still draws where the terminal can show one.
-  await withCapabilities({ images: "kitty" }, () => {
-    assert.ok(
-      tool.renderResult(result, { expanded: false }, theme, { showImages: true, state: {} }),
-    );
-  });
-});
+    assert.match(collapsed, /┌/);
+    assert.doesNotMatch(collapsed, /cannot display inline images/);
 
-test("every unavailable image generation warns and uses Unicode", async () => {
-  const { primeDisplay } = await import("../dist/display.js");
-  await primeDisplay();
-  const tool = registerWithImages();
-  await withCapabilities({ images: null }, async () => {
-    for (const source of ["a -> b", "a -> c"]) {
-      const result = await drawInTui(tool, { source });
-      assert.equal(result.details.image, undefined);
-      assert.equal(result.details.renderedAs, "unicode");
-      assert.deepEqual(result.details.notes, [
-        "Image support is unavailable; generated as Unicode.",
-      ]);
-      assert.match(result.content[0].text, /Image support is unavailable; generated as Unicode\./);
-    }
+    const expanded = tool
+      .renderResult(result, { expanded: true }, theme, context)
+      .render(120)
+      .join("\n");
+    assert.match(expanded, /┌/);
+    assert.doesNotMatch(expanded, /\.png/);
+    assert.match(expanded, /This terminal cannot display inline images\./);
+  });
+
+  await withCapabilities({ images: "kitty" }, () => {
+    const expanded = tool
+      .renderResult(result, { expanded: true }, theme, { showImages: true, state: {} })
+      .render(120)
+      .join("\n");
+    assert.ok(expanded.includes("\x1b_G"), expanded);
   });
 });
 
@@ -667,22 +569,22 @@ test("the drawn diagram links to its file, so a click opens it for zooming", asy
   const { pathToFileURL } = await import("node:url");
   const { basename } = await import("node:path");
   await primeDisplay();
-  const tool = registerWithImages();
+  const tool = registerWithRasterizer();
   const context = { showImages: true, state: {} };
 
   await withCapabilities({ images: "kitty", hyperlinks: true }, async () => {
     const titled = await drawInTui(tool, { source: "a -> b", title: "Request path" });
     const url = pathToFileURL(titled.details.image.path).href;
-    const drawn = tool.renderResult(titled, { expanded: false }, theme, context).render(120);
+    const drawn = tool.renderResult(titled, { expanded: true }, theme, context).render(120);
     assert.ok(
       drawn.some((row) => row.includes(`\x1b]8;;${url}`) && row.includes("Request path")),
       "the title is the link",
     );
 
-    // With no title there is nothing to link, so the file name carries it instead.
+    // Untitled diagrams link their file name.
     const untitled = await drawInTui(tool, { source: "a -> c" });
     const rows = tool
-      .renderResult(untitled, { expanded: false }, theme, { showImages: true, state: {} })
+      .renderResult(untitled, { expanded: true }, theme, { showImages: true, state: {} })
       .render(120);
     const name = basename(untitled.details.image.path);
     assert.ok(
@@ -695,12 +597,12 @@ test("the drawn diagram links to its file, so a click opens it for zooming", asy
 test("a terminal that cannot make links gets neither a link nor a file name", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
-  const tool = registerWithImages();
+  const tool = registerWithRasterizer();
 
   await withCapabilities({ images: "kitty", hyperlinks: false }, async () => {
     const untitled = await drawInTui(tool, { source: "a -> b" });
     const drawn = tool
-      .renderResult(untitled, { expanded: false }, theme, { showImages: true, state: {} })
+      .renderResult(untitled, { expanded: true }, theme, { showImages: true, state: {} })
       .render(120)
       .join("\n");
     assert.equal(drawn.includes("\x1b]8;"), false);
