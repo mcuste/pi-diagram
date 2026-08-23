@@ -5,9 +5,10 @@
 ![Pi using the diagram extension](docs/demo/pi-diagram-demo.gif)
 
 An extension for the [Pi](https://github.com/earendil-works/pi) and
-[Oh My Pi](https://github.com/can1357/oh-my-pi) terminal coding agents. It gives the model one
-`diagram` tool that turns declarative [D2](https://d2lang.com) source into a rendered diagram in the
-transcript, or into documentation artifacts checked into the repository.
+[Oh My Pi](https://github.com/can1357/oh-my-pi) terminal coding agents. It makes agents actively use
+visual explanations instead of defaulting to walls of text. The model writes compact declarative
+[D2](https://d2lang.com) source through one `diagram` tool. The extension renders that source as
+Unicode in the terminal and as reusable SVG and PNG output.
 
 If any of those names are new to you:
 
@@ -28,10 +29,13 @@ back to A." The user rebuilds a graph in their head that the agent could have dr
 Mermaid block moves the problem rather than solving it, because a terminal shows the source instead
 of the picture.
 
-This extension gives the model one tool for that. The model writes the meaning: nodes, edges,
-groups, labels, emphasis. The tool owns the appearance: layout engine, theme, spacing, fonts, and
-which representation the current terminal can actually display. Diagrams then look consistent
-across calls, because the model is not styling them one at a time.
+The goal is to change how agents explain, not just add a renderer. When structure, flow, sequence,
+data, or relationships are easier to see than to read, the agent leads with a diagram and limits
+prose to details the picture cannot show.
+
+D2 keeps generation token-efficient: the model describes nodes, edges, groups, and labels instead
+of spending tokens on layout or SVG coordinates. The tool owns the layout, theme, spacing, and
+fonts, so the same compact source produces consistent Unicode, SVG, and PNG output.
 
 ## Requirements
 
@@ -128,8 +132,9 @@ language.
 
 ## When the model draws
 
-A described tool gets called when the user asks for a diagram, not when a diagram is the clearer
-answer. So the extension adds a short block to the host system prompt: draw when structure, flow,
+A tool description alone gets called when the user asks for a diagram, not whenever a diagram is
+the clearer answer. To make visual explanation active, the extension adds a short block to the host
+system prompt: draw when structure, flow,
 or relationships are easier to see than to read, call the tool before explaining, keep the prose
 to what the picture does not show, and never hand-write ASCII art or Mermaid. The block tells the
 model to check C4, sequence, class, data, dependency, or tree before drawing a generic flow. The
