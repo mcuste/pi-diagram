@@ -35,6 +35,10 @@ const SOLID_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">' +
   '<rect width="200" height="100" fill="#334155"/></svg>';
 
+const TALL_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="725.49" height="1200">' +
+  '<rect width="725.49" height="1200" fill="#334155"/></svg>';
+
 function svgWith(faces, text = "api") {
   const blocks = faces
     .map(
@@ -191,6 +195,15 @@ test("a stored image that disagrees with its own header is refused", () => {
       message,
     });
   }
+});
+
+test("a height-limited image keeps the requested aspect ratio", async () => {
+  const drawn = await new ResvgRasterizer({ cache: memoryCache() }).rasterize({
+    svg: TALL_SVG,
+    signal: undefined,
+  });
+  assert.ok(drawn.widthPx >= 1450 && drawn.widthPx <= 1451);
+  assert.equal(drawn.heightPx, 2400);
 });
 
 test("a diagram already drawn as an image is not drawn again", async () => {

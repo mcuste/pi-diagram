@@ -325,7 +325,11 @@ async function draw(svg: RenderedSvg, signal: AbortSignal | undefined): Promise<
 
     const probe = new Resvg(svg, { font });
     const dimensions = parseTargetDimensions(probe.width, probe.height);
-    const drawn = new Resvg(svg, { font, fitTo: { mode: "width", value: dimensions.widthPx } });
+    const fitTo =
+      dimensions.heightPx === MAX_HEIGHT_PX && dimensions.widthPx < MAX_WIDTH_PX
+        ? { mode: "height" as const, value: dimensions.heightPx }
+        : { mode: "width" as const, value: dimensions.widthPx };
+    const drawn = new Resvg(svg, { font, fitTo });
     const image = parseRenderedPng(drawn.render().asPng(), dimensions);
     throwIfCancelled(signal, "Drawing the diagram");
     return { ...image, systemFonts: missing.length > 0 };

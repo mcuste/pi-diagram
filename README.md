@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/mcuste/pi-diagram/actions/workflows/ci.yml/badge.svg)](https://github.com/mcuste/pi-diagram/actions/workflows/ci.yml)
 
+![Pi using the diagram extension](docs/demo/pi-diagram-demo.gif)
+
 An extension for the [Pi](https://github.com/earendil-works/pi) and
 [Oh My Pi](https://github.com/can1357/oh-my-pi) terminal coding agents. It gives the model one
 `diagram` tool that turns declarative [D2](https://d2lang.com) source into a rendered diagram in the
@@ -17,6 +19,7 @@ If any of those names are new to you:
 > **Status: images, text, and files work.** Unicode box drawing is the default. Users can opt in
 > to inline images where the terminal supports them. Files land outside the repository unless a
 > destination is named.
+
 
 ## Why
 

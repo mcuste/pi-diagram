@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added a recorded local-checkout demo with architecture, request-flow, and module-dependency
+  diagrams.
+
+### Fixed
+
+- Height-limited PNGs now use height-based raster sizing, which avoids false dimension failures
+  from aspect-ratio rounding.
+
 ## [0.4.0] - 2026-08-23
 
 ### Changed
