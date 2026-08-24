@@ -5,17 +5,16 @@ import { parseArtifactNames, workspacePaths } from "./artifacts.js";
 import { type Diagnostic, formatDiagnostic } from "./d2/diagnostics.js";
 import { DEFAULT_PROFILE, type ProfileName } from "./d2/profiles.js";
 import { D2Cli, type D2Renderer } from "./d2/runner.js";
-import {
-  type Component,
-  type DiagramCallView,
-  type DisplayContext,
-  type DisplayTheme,
-  displayLoaded,
-  imagesSupported,
-  primeDisplay,
-  renderDiagramCall,
-  renderDiagramResult,
-} from "./display.js";
+import type {
+  Component,
+  DiagramCallView,
+  DiagramResultView,
+  DisplayedAs,
+  DisplayTheme,
+} from "./display/contracts.js";
+import { isOmpRenderContext, ompDisplay, updateOmpDiagramOverlay } from "./display/omp.js";
+import { piDisplay } from "./display/pi.js";
+import { primeDisplay } from "./display/shared.js";
 import { ResvgRasterizer, type SvgRasterizer } from "./raster.js";
 import { type DiagramRendering, type Representation, renderDiagram } from "./render.js";
 import { removeTerminalControls } from "./terminal.js";
@@ -27,8 +26,6 @@ import { removeTerminalControls } from "./terminal.js";
 const MAX_SOURCE_LENGTH = 20_000;
 const MAX_TITLE_LENGTH = 120;
 const MAX_PATH_LENGTH = 255;
-
-const IMAGE_UNAVAILABLE_WARNING = "This terminal cannot display inline images.";
 
 let diagramDescription: string | undefined;
 let diagramDescriptionLoading: Promise<void> | undefined;
@@ -79,7 +76,7 @@ const DiagramRender = Type.Union(
   [Type.Literal("auto"), Type.Literal("image"), Type.Literal("unicode"), Type.Literal("source")],
   {
     description:
-      "`auto` shows Unicode by default and a PNG after Ctrl+O. Explicit modes override the display for this call.",
+      "`auto` prepares complete Unicode and PNG views. Ctrl+O replaces Unicode in Pi or opens OMP's latest PNG in a fullscreen overlay. Explicit modes override the display for this call.",
   },
 );
 
@@ -96,9 +93,6 @@ const DiagramFormats = Type.Array(DiagramFormat, {
   description:
     "Artifacts to write and return. Defaults to editable source and SVG; use SVG in documents.",
 });
-
-/** What the transcript shows, which is not always the text representation that was prepared. */
-type DisplayedAs = Representation | "image";
 
 const DiagramSave = Type.Object(
   {
@@ -173,8 +167,9 @@ interface ToolResult<TDetails> {
 
 interface ToolContext {
   readonly cwd: string;
-  /** Only a terminal UI can display an image; print and RPC modes never can. */
+  /** Pi identifies TUI mode directly; OMP exposes the same fact as `hasUI`. */
   readonly mode?: "tui" | "rpc" | "json" | "print";
+  readonly hasUI?: boolean;
   readonly ui?: {
     confirm(title: string, message: string): Promise<boolean>;
   };
@@ -203,8 +198,12 @@ interface ToolDefinition<TParameters extends TSchema, TDetails> {
     | ((args: Partial<Static<TParameters>>) => "shared" | "exclusive");
   readonly executionMode?: "sequential" | "parallel";
   readonly formatApprovalDetails?: (args: unknown) => string | readonly string[] | undefined;
-  /** Arguments can still be arriving, so every field is read defensively. */
-  readonly renderCall?: (args: Partial<Static<TParameters>>, theme: DisplayTheme) => Component;
+  /** Pi passes the theme second; OMP passes render options before it. */
+  readonly renderCall?: (
+    args: Partial<Static<TParameters>>,
+    themeOrOptions: DisplayTheme | unknown,
+    theme?: DisplayTheme,
+  ) => Component;
   /** Throwing here is the host's signal to render the result its own way. */
   readonly renderResult?: (
     result: { readonly content: readonly TextContent[]; readonly details: TDetails },
@@ -219,34 +218,6 @@ interface ToolDefinition<TParameters extends TSchema, TDetails> {
     onUpdate: unknown,
     context: ToolContext,
   ): Promise<ToolResult<TDetails>>;
-}
-
-const fallbackDisplayStates = new WeakMap<object, Record<string, unknown>>();
-
-function displayContextFor(
-  details: DiagramToolDetails,
-  expanded: boolean,
-  context: unknown,
-): DisplayContext {
-  const record =
-    typeof context === "object" && context !== null
-      ? (context as Record<string, unknown>)
-      : undefined;
-  const hostState = record?.state;
-  let state =
-    typeof hostState === "object" && hostState !== null
-      ? (hostState as Record<string, unknown>)
-      : fallbackDisplayStates.get(details);
-  if (state === undefined) {
-    state = {};
-    fallbackDisplayStates.set(details, state);
-  }
-  return {
-    // OMP passes tool arguments here instead of Pi's row context.
-    showImages: typeof record?.showImages === "boolean" ? record.showImages : true,
-    expanded,
-    state,
-  };
 }
 
 export interface DiagramExtensionApi {
@@ -410,6 +381,18 @@ function expandedLines(details: DiagramToolDetails, displayedAs: DisplayedAs): r
   return displayedAs === "source" ? lines : [...lines, "", details.source];
 }
 
+function displayView(details: DiagramToolDetails): DiagramResultView {
+  return {
+    requested: details.requested,
+    renderedAs: details.renderedAs,
+    image: details.image,
+    title: details.title,
+    text: details.textPreview,
+    notes: details.notes ?? [],
+    details: (displayedAs) => expandedLines(details, displayedAs),
+  };
+}
+
 export function registerDiagramTools(
   pi: DiagramExtensionApi,
   dependencies: DiagramExtensionDependencies = {},
@@ -432,16 +415,26 @@ export function registerDiagramTools(
     loadMode: "discoverable",
     concurrency: "shared",
     executionMode: "parallel",
-    renderCall(args, theme) {
-      return renderDiagramCall(callView(args), theme);
+    renderCall(args, themeOrOptions, ompTheme) {
+      const theme =
+        ompTheme ??
+        (typeof themeOrOptions === "object" &&
+        themeOrOptions !== null &&
+        typeof Reflect.get(themeOrOptions, "fg") === "function"
+          ? (themeOrOptions as DisplayTheme)
+          : undefined);
+      if (theme === undefined) {
+        throw new Error("The host did not provide a display theme.");
+      }
+      const display = ompTheme === undefined ? piDisplay : ompDisplay;
+      return display.renderCall(callView(args), theme);
     },
     async execute(_toolCallId, parameters, signal, _onUpdate, context) {
-      let drawnHere = false;
-      if (context.mode === "tui") {
-        // Direct registrations can call the tool before the display import finishes.
+      const hasTui = context.mode === "tui" || context.hasUI === true;
+      if (hasTui) {
         await display;
-        drawnHere = displayLoaded();
       }
+      const drawnHere = context.mode === "tui";
       const rendering = await renderDiagram(
         {
           source: parameters.source,
@@ -456,6 +449,11 @@ export function registerDiagramTools(
         renderer,
         rasterizer,
       );
+      updateOmpDiagramOverlay(
+        context,
+        { image: rendering.image, title: rendering.title },
+        (parameters.render ?? "auto") === "auto",
+      );
       return {
         content: [{ type: "text", text: contentFor(rendering, drawnHere, rendering.notes) }],
         details: detailsFor(parameters, rendering),
@@ -463,48 +461,13 @@ export function registerDiagramTools(
     },
     renderResult(result, options, theme, context) {
       const details = result.details;
-      const displayContext = displayContextFor(details, options.expanded, context);
-      const wantsImage =
-        details.requested === "image" || (details.requested === "auto" && options.expanded);
-      const imageSupported =
-        wantsImage &&
-        details.image !== undefined &&
-        displayContext.showImages &&
-        imagesSupported() === true;
-
-      let imageWarning: string | undefined;
-      if (wantsImage && details.image !== undefined && !imageSupported) {
-        imageWarning = displayContext.showImages
-          ? IMAGE_UNAVAILABLE_WARNING
-          : "Inline images are disabled in this view.";
+      const view = displayView(details);
+      if (isOmpRenderContext(context)) {
+        const displayContext = ompDisplay.resolveContext(details, options, context);
+        return ompDisplay.renderResult(view, options, theme, displayContext);
       }
-      const notes =
-        imageWarning === undefined || details.notes?.includes(imageWarning)
-          ? (details.notes ?? [])
-          : [...(details.notes ?? []), imageWarning];
-
-      let hint: string | undefined;
-      if (details.requested === "auto" && !options.expanded && details.image !== undefined) {
-        hint = "Ctrl+O: view PNG";
-      } else if (details.requested === "auto" && options.expanded && imageSupported) {
-        hint = "Ctrl+O: show Unicode";
-      } else if (details.requested === "image" && imageSupported) {
-        hint = options.expanded ? "Ctrl+O: fit image" : "Ctrl+O: zoom image";
-      }
-
-      return renderDiagramResult(
-        {
-          image: imageSupported ? details.image : undefined,
-          title: details.title,
-          text: details.textPreview,
-          notes,
-          hint,
-          details: (shownImage) =>
-            expandedLines(details, shownImage ? "image" : details.renderedAs),
-        },
-        theme,
-        displayContext,
-      );
+      const displayContext = piDisplay.resolveContext(details, options, context);
+      return piDisplay.renderResult(view, options, theme, displayContext);
     },
   });
 }

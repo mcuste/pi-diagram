@@ -261,6 +261,14 @@ function drawInTui(diagram, parameters) {
   });
 }
 
+function drawInOmp(diagram, parameters, context = {}) {
+  return diagram.execute("call-1", parameters, undefined, () => {}, {
+    cwd: process.cwd(),
+    hasUI: true,
+    ...context,
+  });
+}
+
 test("the waiting row names the diagram, not its source", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
@@ -510,22 +518,108 @@ test("a missing PNG falls back to Unicode without image details or controls", as
   });
 });
 
-test("an OMP renderer argument does not disable a supported image", async () => {
+test("OMP opens a fitted PNG overlay without purging other images", async () => {
+  const { primeDisplay } = await import("../dist/display.js");
+  await primeDisplay();
+  const text = ["┌────┐", ...Array.from({ length: 29 }, (_, index) => `row ${index + 2}`)].join(
+    "\n",
+  );
+  const tool = register(createRenderer(text), createRasterizer());
+  let expanded = false;
+  let tick;
+  const overlays = [];
+  const ui = {
+    getToolsExpanded: () => expanded,
+    setToolsExpanded: (value) => {
+      expanded = value;
+    },
+    custom: (factory, options) => {
+      const deferred = Promise.withResolvers();
+      overlays.push({ factory, options, ...deferred });
+      return deferred.promise;
+    },
+  };
+  const result = await withCapabilities({ images: "kitty" }, () =>
+    drawInOmp(tool, { source: "a -> b" }, { ui, setInterval: (callback) => (tick = callback) }),
+  );
+
+  await withCapabilities({ images: "kitty", hyperlinks: true }, async () => {
+    const transcript = tool
+      .renderResult(result, { expanded: false }, theme, { source: "a -> b" })
+      .render(120)
+      .join("\n");
+    assert.match(transcript, /row 30/);
+    assert.match(transcript, /Ctrl\+O: view latest PNG/);
+    assert.equal(overlays.length, 0);
+
+    expanded = true;
+    tick();
+    const shown = overlays.at(-1);
+    assert.deepEqual(shown.options, {
+      overlay: true,
+      overlayOptions: {
+        fullscreen: true,
+        width: "100%",
+        maxHeight: "100%",
+        margin: 0,
+      },
+    });
+    let cleared = 0;
+    const overlay = shown.factory(
+      { terminal: { rows: 40 }, clearInlineImages: () => cleared++ },
+      theme,
+      { matches: (data, action) => data === "\x0f" && action === "app.tools.expand" },
+      shown.resolve,
+    );
+    const lines = overlay.render(120);
+    const png = lines.join("\n");
+    assert.match(png, /Ctrl\+O or Esc to close/);
+    assert.doesNotMatch(png, /cannot display inline images/);
+    assert.ok(lines.length <= 40, String(lines.length));
+
+    overlay.handleInput("\x0f");
+    await shown.promise;
+    await Promise.resolve();
+    assert.equal(cleared, 0);
+    assert.equal(expanded, false);
+  });
+});
+
+test("OMP opens the most recent diagram overlay", async () => {
   const { primeDisplay } = await import("../dist/display.js");
   await primeDisplay();
   const tool = registerWithRasterizer();
-  const result = await withCapabilities({ images: "kitty" }, () =>
-    drawInTui(tool, { source: "a -> b" }),
-  );
+  let expanded = false;
+  let tick;
+  const overlays = [];
+  const ui = {
+    getToolsExpanded: () => expanded,
+    setToolsExpanded: (value) => {
+      expanded = value;
+    },
+    custom: (factory, options) => {
+      const deferred = Promise.withResolvers();
+      overlays.push({ factory, options, ...deferred });
+      return deferred.promise;
+    },
+  };
+  const context = { ui, setInterval: (callback) => (tick = callback) };
+  await drawInOmp(tool, { source: "a -> b", title: "First diagram" }, context);
+  await drawInOmp(tool, { source: "a -> b", title: "Latest diagram" }, context);
 
-  await withCapabilities({ images: "kitty" }, () => {
-    const rows = tool
-      .renderResult(result, { expanded: true }, theme, { source: "a -> b" })
-      .render(120);
-    assert.ok(
-      rows.some((row) => row.includes("\x1b_G")),
-      rows.join("\n"),
+  await withCapabilities({ images: "kitty" }, async () => {
+    expanded = true;
+    tick();
+    const shown = overlays.at(-1);
+    const overlay = shown.factory(
+      { terminal: { rows: 40 } },
+      theme,
+      { matches: () => false },
+      shown.resolve,
     );
+    assert.match(overlay.render(120).join("\n"), /Latest diagram/);
+    overlay.handleInput("\x1b");
+    await shown.promise;
   });
 });
 

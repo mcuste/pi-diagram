@@ -11,7 +11,7 @@
 | `src/guidance.ts` | Loading the cached prompt and appending it to the host prompt |
 | `src/render.ts` | Unicode, SVG, and PNG generation, fallbacks, and transcript limits |
 | `src/raster.ts` | Drawing the SVG as a PNG, and the checks on what comes back |
-| `src/display.ts` | Building the terminal components, including the inline image |
+| `src/display/` | Shared terminal image support plus separate Pi and Oh My Pi renderers |
 | `src/terminal.ts` | Control-character parsing for text that reaches a terminal |
 | `src/svg.ts` | Structural SVG and stylesheet parsing before rasterizing or saving |
 | `src/d2/fonts.ts` | Recovering the fonts D2 embeds in its SVG, and what they can draw |
@@ -75,16 +75,13 @@ file. The commit step only receives a complete prepared result. An optional SVG 
 leaves usable text intact and adds a note. An explicit SVG save still fails if no safe SVG can be
 produced. An explicit PNG save writes no empty file when rasterization fails.
 
-The collapsed default result shows Unicode. The host's expanded state is the zoom control:
-`renderResult` replaces Unicode with a PNG that fills the terminal width. Tall diagrams continue
-below the viewport. An explicit image request uses the existing 60 by 18 cell preview before
-expansion.
+Pi replaces Unicode with a terminal-width PNG when its tool row expands. Oh My Pi keeps Unicode in
+the chronological tool result and opens the latest PNG in a viewport-fitted fullscreen overlay.
+Explicit image requests use a compact preview in either host.
 
-The diagram is also a link. `openable` in `src/display.ts` turns the path in the temp store into
-a `file://` URL, and the title, or the file name when there is no title, carries it. The link is
-emitted only when the terminal reports OSC 8 support and only when the image is really drawn,
-because a link to a picture the row does not show would be misleading. Nothing in either host is
-needed for the click: the terminal itself opens the file.
+The shared display layer turns a private temp-store path into a `file://` URL only when OSC 8 is
+available. Pi links the image it draws. Oh My Pi links the prepared PNG below Unicode so it remains
+available after the transcript settles.
 
 `@earendil-works/pi-tui` has to be the host's copy. The host paints the components built here, and
 the library keeps image placement state in module scope, so two copies mean an image can reserve
@@ -92,15 +89,13 @@ its rows and draw nothing. `tuiSpecifier` resolves the real host entry point fir
 executable symlink still leads to the host package. The static bare fallback lets OMP remap the
 legacy package name to its in-process compatibility module.
 
-The async extension factory resolves the host's `pi-tui` copy before the host starts its session.
-A tool call therefore cannot race this initialization. Capability detection controls only display:
-every call prepares all three representations. An unsupported terminal sees Unicode normally and
-gets the image limitation only after expanding the row. `renderResult` throws only when the
-terminal library is missing, which tells the host to print the content instead.
+The async extension factory resolves the host's TUI before the session starts. Every call prepares
+all three representations. Unsupported terminals keep Unicode and report the image limitation only
+when the user invokes the image view.
 
-In a terminal the model gets a summary line and the diagram travels in `details`. Nothing calls
-`renderResult` in print, RPC, and JSON modes, so there `content` carries Unicode text.
-`renderCall` draws the waiting row from the arguments and leaves the source out.
+In a terminal the model gets a summary line and the diagram travels in `details`. Print, RPC, and
+JSON modes return Unicode in `content`. `renderCall` draws the waiting row from the arguments and
+leaves the source out.
 
 Pi loads TypeScript through [jiti](https://github.com/unjs/jiti) and Oh My Pi runs it natively, so
 `package.json` points both `pi.extensions` and `omp.extensions` at `src/index.ts` and no build step
@@ -146,8 +141,8 @@ pi -ne -e ./src/index.ts
 omp --no-extensions -e ./src/index.ts
 ```
 
-Run a diagram, then press `Ctrl+O` to check the PNG view. Use `render: "image"` in a tool call to
-check the explicit compact image override.
+Run a diagram. In Pi, press `Ctrl+O` to replace Unicode in the tool row. In OMP, verify chronological
+Unicode, then open and close the latest diagram's fitted PNG overlay with `Ctrl+O`.
 
 Or install the working copy:
 

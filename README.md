@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/mcuste/pi-diagram/actions/workflows/ci.yml/badge.svg)](https://github.com/mcuste/pi-diagram/actions/workflows/ci.yml)
 
-![Pi using the diagram extension](docs/demo/pi-diagram-demo.gif)
+![Diagram extension demo](docs/demo/pi-diagram-demo.gif)
 
 An extension for the [Pi](https://github.com/earendil-works/pi) and
 [Oh My Pi](https://github.com/can1357/oh-my-pi) terminal coding agents. It makes agents actively use
@@ -17,9 +17,6 @@ If any of those names are new to you:
 - **Pi** and **Oh My Pi** are terminal coding agents. An **extension** is an npm package they load
   at startup to add tools the model can call.
 
-> **Status: images, text, and files work.** Unicode box drawing is the default. Users can opt in
-> to inline images where the terminal supports them. Files land outside the repository unless a
-> destination is named.
 
 
 ## Why
@@ -125,7 +122,7 @@ language.
 | --- | --- |
 | `source` | The diagram, in D2 |
 | `title` | Label shown above the diagram |
-| `render` | `auto` uses the user preference; `image` and `unicode` override it; `source` echoes the D2 |
+| `render` | `auto` prepares Unicode and PNG; `image`, `unicode`, and `source` choose a view |
 | `profile` | What the diagram is for. It sets the layout engine, theme, and spacing |
 | `formats` | Files to produce: `source`, `svg`, `png`, `txt`. Written outside the repository |
 | `save` | Also copy them into the repository. `dir` is required |
@@ -168,29 +165,35 @@ drawing.
 
 ## Unicode and PNG views
 
-Every call prepares Unicode, SVG, and PNG from the same D2 source. The collapsed result shows
-Unicode. Press `Ctrl+O`, the host's default tool-expansion shortcut, to replace it with a PNG that
-fills the terminal width. Tall diagrams continue below the viewport. Press it again to return to
-Unicode.
+Every call prepares Unicode, SVG, and PNG from the same D2 source.
 
-If the terminal or harness has no image protocol, the collapsed result stays unchanged. Pressing
-`Ctrl+O` keeps the Unicode view and reports `This terminal cannot display inline images.` A
-multiplexer between the terminal and agent must forward the protocol. tmux needs
-`allow-passthrough`, and herdr needs `experimental.kitty_graphics`.
+Pi shows Unicode in its live tool row. Press `Ctrl+O` to replace it with the PNG and press it again
+to return to Unicode. If the terminal or harness has no image protocol, expansion keeps the Unicode
+view and reports `This terminal cannot display inline images.` A multiplexer between the terminal
+and agent must forward the protocol. tmux needs `allow-passthrough`, and herdr needs
+`experimental.kitty_graphics`.
+
+OMP keeps complete Unicode in the chronological tool result because settled transcript rows are
+immutable. `Ctrl+O` opens the latest diagram's PNG in a viewport-fitted fullscreen overlay. Press
+`Ctrl+O` or `Esc` to close it and return to the transcript. The `Open PNG` link remains available
+independently.
+
+OMP owns the shared terminal image budget. Closing an overlay does not purge unrelated terminal
+images; the host evicts cached graphics under its normal budget policy.
 
 Per-call overrides remain available when the user requests another method:
 
-- `render: "image"` shows a compact PNG first, then zooms it with `Ctrl+O`.
-- `render: "unicode"` keeps Unicode in both views.
+- `render: "image"` shows a compact inline PNG. Pi can zoom it with `Ctrl+O`.
+- `render: "unicode"` keeps Unicode in both Pi views.
 - `render: "source"` shows the D2 source.
 
 The PNG never enters the model's context. It is written to a private temporary directory and read
-when the expanded row is displayed.
+only by the display renderer.
 
-Where the terminal supports OSC 8 hyperlinks, the title above the expanded PNG links to the image
-file. A diagram with no title shows the linked file name under the image instead. Open that link
-to pan or zoom beyond the terminal view. Ghostty, Kitty, WezTerm, and iTerm2 support these links,
-some of them on a modified click.
+Where the terminal supports OSC 8 hyperlinks, OMP shows the linked PNG file name below the Unicode
+tool result. Pi links the title above the PNG, or the file name below an untitled PNG. Open that link
+to pan or zoom beyond the terminal view. Ghostty, Kitty, WezTerm, and iTerm2 support these links, some
+of them on a modified click.
 
 D2 exports PNG by driving a headless browser it downloads on first use, which this tool will not
 do during a call. Instead the SVG is rasterized locally by

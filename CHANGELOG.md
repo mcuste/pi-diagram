@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Oh My Pi now keeps Unicode diagrams in chronological tool results and opens the latest PNG in a
+  viewport-fitted fullscreen overlay.
+
+### Fixed
+
+- Closing an Oh My Pi PNG overlay no longer clears unrelated terminal images.
+- Documentation now describes automatic Unicode and PNG preparation plus the separate Pi and Oh My
+  Pi display paths.
+
 ## [0.4.2] - 2026-08-23
 
 ### Changed
