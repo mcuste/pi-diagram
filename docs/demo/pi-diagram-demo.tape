@@ -1,4 +1,5 @@
 Output docs/demo/pi-diagram-demo.gif
+Output docs/demo/pi-diagram-demo.mp4
 
 Set FontSize 18
 Set Width 1600

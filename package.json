@@ -84,12 +84,16 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
-    ]
+    ],
+    "video": "https://cdn.jsdelivr.net/gh/mcuste/pi-diagram@main/docs/demo/pi-diagram-demo.mp4",
+    "image": "https://cdn.jsdelivr.net/gh/mcuste/pi-diagram@main/docs/demo/pi-diagram-preview.png"
   },
   "omp": {
     "extensions": [
       "./src/index.ts"
-    ]
+    ],
+    "video": "https://cdn.jsdelivr.net/gh/mcuste/pi-diagram@main/docs/demo/pi-diagram-demo.mp4",
+    "image": "https://cdn.jsdelivr.net/gh/mcuste/pi-diagram@main/docs/demo/pi-diagram-preview.png"
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",
