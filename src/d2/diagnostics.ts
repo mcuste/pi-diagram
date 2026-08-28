@@ -31,6 +31,29 @@ export interface Diagnostic {
   readonly hint?: string;
 }
 
+/** Describes an invalid value without calling its methods. */
+export function describeInvalidValue(value: unknown): string {
+  if (typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (value === null) {
+    return "null";
+  }
+  if (typeof value === "bigint") {
+    return `${value}n`;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "undefined") {
+    return String(value);
+  }
+  if (typeof value === "symbol") {
+    return "symbol";
+  }
+  if (typeof value === "function") {
+    return "function";
+  }
+  return "object";
+}
+
 /** A refusal the model can fix by editing its source. What it cannot fix gets another type. */
 export class DiagramSourceError extends Error {
   readonly diagnostics: readonly Diagnostic[];

@@ -14,11 +14,10 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { DiagramSourceError } from "./d2/diagnostics.js";
+import { DiagramSourceError, describeInvalidValue } from "./d2/diagnostics.js";
 import { parseSourceHash } from "./normalize.js";
 import { throwIfCancelled } from "./process.js";
-import { describeCodePoint, findTerminalControl } from "./terminal.js";
-import { describeUnknown, errorMessage, hasErrnoCode } from "./unknown.js";
+import { describeCodePoint, findTerminalControl, safeErrorMessage } from "./terminal.js";
 
 /**
  * Writes diagram artifacts. Files land in a private temporary directory unless a call names a
@@ -107,7 +106,7 @@ function parseFormats(requested: unknown): readonly ArtifactFormat[] {
     if (typeof format !== "string" || !Object.hasOwn(EXTENSIONS, format)) {
       refuse(
         "Diagram save formats are not usable.",
-        `${describeUnknown(format)} is not a format.`,
+        `${describeInvalidValue(format)} is not a format.`,
         `Use ${Object.keys(EXTENSIONS).join(", ")}.`,
       );
     }
@@ -115,7 +114,7 @@ function parseFormats(requested: unknown): readonly ArtifactFormat[] {
     if (formats.includes(parsed)) {
       refuse(
         "Diagram save formats are not usable.",
-        `${describeUnknown(format)} appears more than once.`,
+        `${describeInvalidValue(format)} appears more than once.`,
       );
     }
     formats.push(parsed);
@@ -130,7 +129,7 @@ function parseDirectory(requested: unknown): string {
       "Saving a diagram needs a directory.",
       requested === undefined
         ? "`save.dir` was not given."
-        : `Expected a non-empty path, got ${describeUnknown(requested)}.`,
+        : `Expected a non-empty path, got ${describeInvalidValue(requested)}.`,
       "Name the directory to write into, such as docs/diagrams.",
     );
   }
@@ -153,7 +152,7 @@ function parseDirectory(requested: unknown): string {
   if (isAbsolute(requested) || directory.startsWith("/")) {
     refuse(
       "Diagram save directory is not usable.",
-      `${describeUnknown(requested)} is an absolute path.`,
+      `${describeInvalidValue(requested)} is an absolute path.`,
       "Give a path relative to the workspace, such as docs/diagrams.",
     );
   }
@@ -161,7 +160,7 @@ function parseDirectory(requested: unknown): string {
   if (segments.includes("..")) {
     refuse(
       "Diagram save directory is not usable.",
-      `${describeUnknown(requested)} climbs out of the workspace.`,
+      `${describeInvalidValue(requested)} climbs out of the workspace.`,
       "Give a path inside the workspace.",
     );
   }
@@ -172,7 +171,7 @@ function parseSave(requested: unknown): { readonly directory: string; readonly b
   if (typeof requested !== "object" || requested === null || Array.isArray(requested)) {
     refuse(
       "Diagram save options are not usable.",
-      `Expected an object, got ${describeUnknown(requested)}.`,
+      `Expected an object, got ${describeInvalidValue(requested)}.`,
     );
   }
   const keys = Object.keys(requested);
@@ -212,7 +211,7 @@ function parseBasename(
     if (typeof requested !== "string" || requested.trim().length === 0) {
       refuse(
         "A saved diagram needs a usable name.",
-        `Expected a non-empty string, got ${describeUnknown(requested)}.`,
+        `Expected a non-empty string, got ${describeInvalidValue(requested)}.`,
       );
     }
     chosen = requested;
@@ -232,7 +231,7 @@ function parseBasename(
   if (basename.length === 0) {
     refuse(
       "A saved diagram needs a usable name.",
-      `${describeUnknown(chosen)} has no letters or digits to build a file name from.`,
+      `${describeInvalidValue(chosen)} has no letters or digits to build a file name from.`,
     );
   }
   if (RESERVED_NAMES.has(basename)) {
@@ -283,6 +282,14 @@ function contains(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
 }
 
+/** Checks whether a system error has a given code. */
+function hasSystemErrorCode(error: unknown, code: string): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return false;
+  }
+  return error.code === code;
+}
+
 /**
  * Checks the deepest existing ancestor, before any directory is created: a `docs` symlink
  * pointing outside would otherwise have `mkdir` build the rest of the path beyond it.
@@ -308,7 +315,7 @@ async function assertInsideWorkspace(realRoot: string, target: string): Promise<
       }
       return;
     } catch (error) {
-      if (!hasErrnoCode(error, "ENOENT")) {
+      if (!hasSystemErrorCode(error, "ENOENT")) {
         throw error;
       }
       const parent = dirname(probe);
@@ -358,7 +365,7 @@ export async function parseArtifactTarget(
   if (typeof cwd !== "string" || cwd.length === 0 || !isAbsolute(cwd)) {
     refuse(
       "Diagrams cannot be saved into a repository without a workspace directory.",
-      `The host gave ${describeUnknown(cwd)}.`,
+      `The host gave ${describeInvalidValue(cwd)}.`,
     );
   }
 
@@ -369,7 +376,7 @@ export async function parseArtifactTarget(
   } catch (error) {
     refuse(
       "The workspace directory cannot be read.",
-      `${root} could not be resolved: ${errorMessage(error)}.`,
+      `${root} could not be resolved: ${safeErrorMessage(error)}.`,
     );
   }
 
@@ -495,7 +502,7 @@ async function snapshotWritable(destination: string): Promise<Stats | undefined>
     }
     return existing;
   } catch (error) {
-    if (hasErrnoCode(error, "ENOENT")) {
+    if (hasSystemErrorCode(error, "ENOENT")) {
       return undefined;
     }
     throw error;

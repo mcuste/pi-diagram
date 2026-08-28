@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
-import { DiagramSourceError } from "./d2/diagnostics.js";
+import { DiagramSourceError, describeInvalidValue } from "./d2/diagnostics.js";
 import { describeCodePoint, findTerminalControl } from "./terminal.js";
-import { describeUnknown } from "./unknown.js";
 
 /** Byte-level enforcement of the schema's character limit in `tools.ts`. */
 const MAX_SOURCE_BYTES = 20 * 1024;
@@ -91,7 +90,7 @@ export function parseTitle(raw: unknown): SafeTitle | undefined {
   }
   if (typeof raw !== "string") {
     throw new DiagramSourceError("Diagram title must be a string.", [
-      { code: "D2_SOURCE", message: `Received ${describeUnknown(raw)}.` },
+      { code: "D2_SOURCE", message: `Received ${describeInvalidValue(raw)}.` },
     ]);
   }
   if (raw.length > MAX_TITLE_LENGTH) {
@@ -120,7 +119,7 @@ export function parseSourceHash(raw: unknown): SourceHash {
     return raw as SourceHash;
   }
   throw new DiagramSourceError("Diagram source hash is not usable.", [
-    { code: "D2_SOURCE", message: `Expected a SHA-256 digest, got ${describeUnknown(raw)}.` },
+    { code: "D2_SOURCE", message: `Expected a SHA-256 digest, got ${describeInvalidValue(raw)}.` },
   ]);
 }
 

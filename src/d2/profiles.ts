@@ -1,5 +1,4 @@
-import { describeUnknown } from "../unknown.js";
-import { DiagramSourceError } from "./diagnostics.js";
+import { DiagramSourceError, describeInvalidValue } from "./diagnostics.js";
 
 /**
  * What a diagram is for decides how it looks. The model names the purpose, this table sets the
@@ -149,7 +148,7 @@ export function parseProfile(raw: unknown): RenderProfile {
     throw new DiagramSourceError("Unsupported diagram profile.", [
       {
         code: "D2_SOURCE",
-        message: `${describeUnknown(raw)} is not a profile.`,
+        message: `${describeInvalidValue(raw)} is not a profile.`,
         hint: `Use ${PROFILE_NAMES.join(", ")}.`,
       },
     ]);

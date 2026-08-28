@@ -29,6 +29,11 @@ export function removeTerminalControls(text: string, allowLineFeed = false): str
   }).join("");
 }
 
+/** Returns a terminal-safe Error message, or `unknown error`. */
+export function safeErrorMessage(error: unknown): string {
+  return error instanceof Error ? removeTerminalControls(error.message) : "unknown error";
+}
+
 export function describeCodePoint(codePoint: number): string {
   return `U+${codePoint.toString(16).padStart(4, "0").toUpperCase()}`;
 }

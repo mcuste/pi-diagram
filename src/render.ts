@@ -7,7 +7,7 @@ import {
   type WrittenArtifact,
   writeArtifacts,
 } from "./artifacts.js";
-import { type Diagnostic, DiagramSourceError } from "./d2/diagnostics.js";
+import { type Diagnostic, DiagramSourceError, describeInvalidValue } from "./d2/diagnostics.js";
 import { parseSafeSource, type SafeD2Source } from "./d2/preflight.js";
 import { type ProfileName, parseProfile, type RenderProfile } from "./d2/profiles.js";
 import {
@@ -33,7 +33,7 @@ import {
   ResvgRasterizer,
   type SvgRasterizer,
 } from "./raster.js";
-import { describeUnknown, errorMessage } from "./unknown.js";
+import { safeErrorMessage } from "./terminal.js";
 
 /** D2's beta text renderer must fail rather than substitute another drawing. */
 export type Representation = "unicode" | "source";
@@ -103,7 +103,7 @@ export function parseRepresentation(requested: unknown): Representation {
       throw new DiagramSourceError("Unsupported render mode.", [
         {
           code: "D2_SOURCE",
-          message: `${describeUnknown(requested)} is not a render mode.`,
+          message: `${describeInvalidValue(requested)} is not a render mode.`,
           hint: "Use auto, image, unicode, or source.",
         },
       ]);
@@ -118,7 +118,7 @@ function parseSignal(raw: unknown): AbortSignal | undefined {
     return raw;
   }
   throw new DiagramSourceError("Diagram cancellation signal is not usable.", [
-    { code: "D2_SOURCE", message: `Received ${describeUnknown(raw)}.` },
+    { code: "D2_SOURCE", message: `Received ${describeInvalidValue(raw)}.` },
   ]);
 }
 
@@ -126,13 +126,13 @@ function parseSignal(raw: unknown): AbortSignal | undefined {
 async function parseDiagramRequest(request: unknown): Promise<ParsedDiagramRequest> {
   if (typeof request !== "object" || request === null || Array.isArray(request)) {
     throw new DiagramSourceError("Diagram request must be an object.", [
-      { code: "D2_SOURCE", message: `Received ${describeUnknown(request)}.` },
+      { code: "D2_SOURCE", message: `Received ${describeInvalidValue(request)}.` },
     ]);
   }
   const unexpected = Object.keys(request).find((key) => !REQUEST_KEYS.has(key));
   if (unexpected !== undefined) {
     throw new DiagramSourceError("Diagram request has an unsupported field.", [
-      { code: "D2_SOURCE", message: `${describeUnknown(unexpected)} is not supported.` },
+      { code: "D2_SOURCE", message: `${describeInvalidValue(unexpected)} is not supported.` },
     ]);
   }
   const read = (key: string): unknown =>
@@ -189,7 +189,7 @@ export async function renderDiagram(
     if (!(error instanceof SvgRenderUnavailableError) || savesSvg || savesPng) {
       throw error;
     }
-    notes.push(`${errorMessage(error)} The SVG and PNG could not be generated.`);
+    notes.push(`${safeErrorMessage(error)} The SVG and PNG could not be generated.`);
   }
 
   const raster =
@@ -346,7 +346,7 @@ async function keepImage(
     if (signal?.aborted) {
       throw error;
     }
-    notes.push(`The image could not be stored: ${errorMessage(error)}`);
+    notes.push(`The image could not be stored: ${safeErrorMessage(error)}`);
     return undefined;
   }
 }

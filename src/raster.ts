@@ -11,7 +11,7 @@ import {
 } from "./d2/fonts.js";
 import type { RenderedSvg } from "./d2/runner.js";
 import { CommandCancelledError, throwIfCancelled } from "./process.js";
-import { errorMessage } from "./unknown.js";
+import { safeErrorMessage } from "./terminal.js";
 
 /**
  * Draws a D2 SVG as a PNG. D2's own PNG export drives a headless browser it downloads on first
@@ -245,7 +245,7 @@ async function load(): Promise<ResvgModule> {
   } catch (error) {
     loaded = undefined;
     throw new ImageRenderUnavailableError(
-      `The SVG rasterizer could not be loaded: ${errorMessage(error)}`,
+      `The SVG rasterizer could not be loaded: ${safeErrorMessage(error)}`,
       { cause: error },
     );
   }
@@ -338,7 +338,7 @@ async function draw(svg: RenderedSvg, signal: AbortSignal | undefined): Promise<
       throw error;
     }
     throw new ImageRenderUnavailableError(
-      `The SVG could not be drawn as an image: ${errorMessage(error)}`,
+      `The SVG could not be drawn as an image: ${safeErrorMessage(error)}`,
       { cause: error },
     );
   } finally {
