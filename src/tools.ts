@@ -281,13 +281,14 @@ function callView(args: Partial<DiagramParameters>): DiagramCallView {
   const source = typeof args.source === "string" ? args.source : "";
   const lines = source.split("\n").filter((line) => line.trim().length > 0).length;
   const directory = readSave(args)?.dir;
-  const saving =
-    typeof directory === "string" ? `, saving into ${removeTerminalControls(directory)}` : "";
+  const saveDirectory =
+    typeof directory === "string" ? removeTerminalControls(directory) : undefined;
   const profile =
     typeof args.profile === "string" ? removeTerminalControls(args.profile) : DEFAULT_PROFILE.name;
   return {
     subject: title === "" ? `${lines} line${lines === 1 ? "" : "s"}` : `"${title}"`,
-    note: `(${profile}${saving})`,
+    profile,
+    saveDirectory,
   };
 }
 

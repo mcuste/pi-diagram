@@ -167,11 +167,17 @@ export function hyperlink(text: string, url: string): string {
 }
 
 export function renderCall(view: DiagramCallView, theme: DisplayTheme): Component {
+  const metadata = [
+    view.profile,
+    view.saveDirectory === undefined ? undefined : `saving into ${view.saveDirectory}`,
+  ]
+    .filter((value): value is string => value !== undefined)
+    .join(", ");
   const text = [
     theme.fg("toolTitle", "diagram "),
     theme.fg("accent", view.subject),
     " ",
-    theme.fg("muted", view.note),
+    theme.fg("muted", `(${metadata})`),
   ].join("");
   return new TextComponent(text);
 }

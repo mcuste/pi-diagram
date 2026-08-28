@@ -15,8 +15,10 @@ export interface DisplayImage {
 export interface DiagramCallView {
   /** What is being drawn: the title, or a line count when there is no title. */
   readonly subject: string;
-  /** The profile, and the directory when the call also saves files. */
-  readonly note: string;
+  /** The selected diagram layout and styling profile. */
+  readonly profile: string;
+  /** The destination directory when the call saves rendered files. */
+  readonly saveDirectory: string | undefined;
 }
 
 type DisplayRequest = "auto" | "image" | "unicode" | "source";
