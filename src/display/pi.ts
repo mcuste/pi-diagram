@@ -104,7 +104,7 @@ function renderPiResult(
     line(url === undefined ? view.title : hyperlink(view.title, url));
   }
   if (picture === undefined) {
-    line(view.text);
+    line(view.display.content);
     if (hint !== undefined && !wantsImage) {
       muted(hint);
     }
@@ -120,7 +120,9 @@ function renderPiResult(
 
   const footer = [
     ...notes,
-    ...(options.expanded ? view.details(picture === undefined ? view.renderedAs : "image") : []),
+    ...(options.expanded
+      ? view.details(picture === undefined ? view.display.format : "image")
+      : []),
   ];
   if (footer.length > 0) {
     line(footer.join("\n"));

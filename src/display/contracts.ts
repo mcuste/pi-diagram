@@ -1,3 +1,5 @@
+import type { StoredPng } from "../render.js";
+
 export interface Component {
   render(width: number): string[];
 }
@@ -6,11 +8,7 @@ export interface DisplayTheme {
   fg(color: string, text: string): string;
 }
 
-export interface DisplayImage {
-  readonly path: string;
-  readonly widthPx: number;
-  readonly heightPx: number;
-}
+export type DisplayImage = StoredPng;
 
 export interface DiagramCallView {
   /** What is being drawn: the title, or a line count when there is no title. */
@@ -24,12 +22,15 @@ export interface DiagramCallView {
 type DisplayRequest = "auto" | "image" | "unicode" | "source";
 export type DisplayedAs = "image" | "unicode" | "source";
 
+type DisplayText =
+  | { readonly format: "unicode"; readonly content: string }
+  | { readonly format: "source"; readonly content: string };
+
 export interface DiagramResultView {
   readonly requested: DisplayRequest;
-  readonly renderedAs: "unicode" | "source";
+  readonly display: DisplayText;
   readonly image: DisplayImage | undefined;
   readonly title: string | undefined;
-  readonly text: string;
   readonly notes: readonly string[];
   readonly details: (displayedAs: DisplayedAs) => readonly string[];
 }

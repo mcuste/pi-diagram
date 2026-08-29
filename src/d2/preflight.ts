@@ -1,15 +1,4 @@
-import type { NormalizedD2Source } from "../normalize.js";
-import { type Diagnostic, DiagramSourceError } from "./diagnostics.js";
-
-/**
- * D2 imports and assets can read local files or fetch URLs, so this lexer rejects them before D2.
- * Ambiguous syntax is refused.
- */
-
-declare const safeSourceBrand: unique symbol;
-
-/** The renderer accepts nothing else, so unchecked source cannot reach D2. */
-export type SafeD2Source = NormalizedD2Source & { readonly [safeSourceBrand]: true };
+import type { Diagnostic } from "./diagnostics.js";
 
 /** D2's documented shapes, less `image`, which loads a file or a URL. */
 const ALLOWED_SHAPES: ReadonlySet<string> = new Set([
@@ -43,23 +32,11 @@ interface Located {
   readonly column: number;
 }
 
-/** Throws with one diagnostic per problem found, rather than at the first. */
-export function parseSafeSource(source: NormalizedD2Source): SafeD2Source {
-  const diagnostics = inspect(source);
-  if (diagnostics.length > 0) {
-    throw new DiagramSourceError(
-      "Diagram source uses D2 features this tool does not allow.",
-      diagnostics,
-    );
-  }
-  return source as SafeD2Source;
-}
-
 /**
  * Lexes only the D2 constructs that can escape the sandbox. Strings and comments are consumed as
  * tokens, so keywords in labels never become policy decisions.
  */
-export function inspect(source: NormalizedD2Source): readonly Diagnostic[] {
+export function inspect(source: string): readonly Diagnostic[] {
   const lineStarts = buildLineStarts(source);
   const locate = (offset: number): Located => locateOffset(lineStarts, offset);
   const diagnostics: Diagnostic[] = [];

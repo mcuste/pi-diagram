@@ -44,8 +44,8 @@ test("every diagram fixture renders to Unicode box drawing", async () => {
 
   for (const name of names) {
     const rendering = await draw(name);
-    assert.equal(rendering.renderedAs, "unicode", name);
-    assert.match(rendering.text, BOX_DRAWING, name);
+    assert.equal(rendering.display.kind, "unicode", name);
+    assert.match(rendering.display.content, BOX_DRAWING, name);
     assert.ok(rendering.lineCount > 2, `${name} produced ${rendering.lineCount} lines`);
     assert.ok(rendering.widthCells > 2, `${name} produced ${rendering.widthCells} columns`);
     assert.match(rendering.d2Version, /^v?\d+\.\d+\.\d+/u, name);
@@ -55,17 +55,17 @@ test("every diagram fixture renders to Unicode box drawing", async () => {
 test("labels survive into the drawing", async () => {
   const flow = await draw("flow.d2");
   for (const label of ["client", "gateway", "api", "database", "request"]) {
-    assert.ok(flow.text.includes(label), `flow lost ${label}`);
+    assert.ok(flow.display.content.includes(label), `flow lost ${label}`);
   }
 
   const sequence = await draw("sequence.d2");
   for (const label of ["user", "web", "api", "db"]) {
-    assert.ok(sequence.text.includes(label), `sequence lost ${label}`);
+    assert.ok(sequence.display.content.includes(label), `sequence lost ${label}`);
   }
 
   const erd = await draw("erd.d2");
   for (const label of ["users", "orders", "user_id", "varchar"]) {
-    assert.ok(erd.text.includes(label), `erd lost ${label}`);
+    assert.ok(erd.display.content.includes(label), `erd lost ${label}`);
   }
 });
 
@@ -205,7 +205,7 @@ test("a diagram saves as editable source and a viewable SVG", async () => {
       assert.ok(svg.includes(label), `SVG lost ${label}`);
     }
     // The transcript still shows the diagram; saving is in addition to it, not instead.
-    assert.equal(rendering.renderedAs, "unicode");
+    assert.equal(rendering.display.kind, "unicode");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -300,7 +300,7 @@ test("the profile changes the picture, not the drawing in the transcript", async
   const source = await fixture("containers.d2");
   const drawn = [];
   for (const profile of ["explain", "architecture", "data", "docs"]) {
-    drawn.push((await renderDiagram({ source, profile }, new D2Cli())).text);
+    drawn.push((await renderDiagram({ source, profile }, new D2Cli())).display.content);
   }
   // D2 draws text in character cells, so theme and spacing have nothing to change there.
   assert.equal(new Set(drawn).size, 1);
@@ -345,7 +345,7 @@ test("a txt sidecar holds the same drawing shown in the transcript", async () =>
       new D2Cli(),
     );
     const written = await readFile(join(root, "docs/design/request-flow.txt"), "utf8");
-    assert.equal(written, `${rendering.text}\n`);
+    assert.equal(written, `${rendering.display.content}\n`);
     assert.match(written, BOX_DRAWING);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -395,7 +395,7 @@ test("a real diagram is drawn as a real PNG, with its own fonts", async () => {
   // A diagram with labels compresses to far more than an empty canvas would.
   assert.ok(bytes.length > 4096, `the image is only ${bytes.length} bytes`);
   // The text drawing is still there, because the terminal may not show images.
-  assert.match(rendering.text, BOX_DRAWING);
+  assert.match(rendering.display.content, BOX_DRAWING);
   assert.deepEqual(rendering.notes, []);
 });
 

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { DiagramSourceError, describeInvalidValue } from "./d2/diagnostics.js";
-import { describeCodePoint, findTerminalControl } from "./terminal.js";
+import { describeCodePoint, findTerminalControl } from "../terminal.js";
+import { DiagramSourceError, describeInvalidValue } from "./diagnostics.js";
+import { inspect } from "./preflight.js";
 
 /** Byte-level enforcement of the schema's character limit in `tools.ts`. */
 const MAX_SOURCE_BYTES = 20 * 1024;
@@ -8,15 +9,12 @@ const MAX_TITLE_LENGTH = 120;
 
 const BYTE_ORDER_MARK = 0xfeff;
 
-declare const normalizedSourceBrand: unique symbol;
+declare const d2SourceBrand: unique symbol;
 declare const safeTitleBrand: unique symbol;
 declare const sourceHashBrand: unique symbol;
 
-/**
- * Source in canonical form: no byte-order mark, LF endings, trimmed, no control characters,
- * within the size cap. Only `normalizeSource` can produce one.
- */
-export type NormalizedD2Source = string & { readonly [normalizedSourceBrand]: true };
+/** D2 source that passed normalization and safe-subset checks. */
+export type D2Source = string & { readonly [d2SourceBrand]: true };
 
 /** A single-line title of bounded length, safe to show beside the diagram. */
 export type SafeTitle = string & { readonly [safeTitleBrand]: true };
@@ -24,8 +22,8 @@ export type SafeTitle = string & { readonly [safeTitleBrand]: true };
 /** A SHA-256 digest of normalized diagram source. */
 export type SourceHash = string & { readonly [sourceHashBrand]: true };
 
-export interface NormalizedSource {
-  readonly text: NormalizedD2Source;
+export interface ParsedD2Source {
+  readonly source: D2Source;
   readonly hash: SourceHash;
   readonly lineCount: number;
 }
@@ -40,8 +38,25 @@ function findControl(text: string): FoundControl | undefined {
   return findTerminalControl(text, true, true);
 }
 
-/** Runs before anything inspects or renders, so the scanner and D2 see the same bytes. */
-export function normalizeSource(raw: unknown): NormalizedSource {
+/** Parses model input into the only source type accepted by D2 renderers. */
+export function parseD2Source(raw: unknown): ParsedD2Source {
+  const text = normalizeSource(raw);
+  const diagnostics = inspect(text);
+  if (diagnostics.length > 0) {
+    throw new DiagramSourceError(
+      "Diagram source uses D2 features this tool does not allow.",
+      diagnostics,
+    );
+  }
+  const hash = createHash("sha256").update(text, "utf8").digest("hex");
+  return {
+    source: text as D2Source,
+    hash: parseSourceHash(hash),
+    lineCount: text.split("\n").length,
+  };
+}
+
+function normalizeSource(raw: unknown): string {
   if (typeof raw !== "string") {
     throw new DiagramSourceError("Diagram source must be a string.", [
       { code: "D2_SOURCE", message: `Received ${raw === null ? "null" : typeof raw}.` },
@@ -75,13 +90,7 @@ export function normalizeSource(raw: unknown): NormalizedSource {
       },
     ]);
   }
-
-  const hash = createHash("sha256").update(text, "utf8").digest("hex");
-  return {
-    text: text as NormalizedD2Source,
-    hash: parseSourceHash(hash),
-    lineCount: text.split("\n").length,
-  };
+  return text;
 }
 
 export function parseTitle(raw: unknown): SafeTitle | undefined {

@@ -8,24 +8,19 @@ import {
   writeArtifacts,
 } from "./artifacts.js";
 import { type Diagnostic, DiagramSourceError, describeInvalidValue } from "./d2/diagnostics.js";
-import { parseSafeSource, type SafeD2Source } from "./d2/preflight.js";
 import { type ProfileName, parseProfile, type RenderProfile } from "./d2/profiles.js";
 import {
   type D2Renderer,
   type D2Svg,
   type D2Text,
+  type RenderedDiagramText,
   SourceFormatUnavailableError,
   type SupportedD2Version,
   SvgRenderUnavailableError,
   TextRenderUnavailableError,
 } from "./d2/runner.js";
-import {
-  type NormalizedSource,
-  normalizeSource,
-  parseTitle,
-  type SafeTitle,
-  type SourceHash,
-} from "./normalize.js";
+import type { D2Source, ParsedD2Source, SafeTitle, SourceHash } from "./d2/source.js";
+import { parseD2Source, parseTitle } from "./d2/source.js";
 import { throwIfCancelled } from "./process.js";
 import {
   ImageRenderUnavailableError,
@@ -41,10 +36,13 @@ export type Representation = "unicode" | "source";
 const MAX_LINES = 300;
 const MAX_COLUMNS = 400;
 const MAX_BYTES = 32 * 1024;
-
+/** The terminal representation selected for display. */
+type DisplayRepresentation =
+  | { readonly kind: "unicode"; readonly content: RenderedDiagramText }
+  | { readonly kind: "source"; readonly content: D2Source };
 interface ParsedDiagramRequest {
-  readonly normalized: NormalizedSource;
-  readonly source: SafeD2Source;
+  readonly parsedSource: ParsedD2Source;
+  readonly source: D2Source;
   readonly title: SafeTitle | undefined;
   readonly profile: RenderProfile;
   readonly representation: Representation;
@@ -64,8 +62,8 @@ const REQUEST_KEYS: ReadonlySet<string> = new Set([
   "signal",
 ]);
 
-interface DiagramImage {
-  /** Absolute path in the temp store. */
+/** A validated PNG persisted in the private session store. */
+export interface StoredPng {
   readonly path: string;
   readonly widthPx: number;
   readonly heightPx: number;
@@ -73,13 +71,12 @@ interface DiagramImage {
 
 export interface DiagramRendering {
   readonly profile: ProfileName;
-  readonly renderedAs: Representation;
-  readonly text: string;
+  readonly display: DisplayRepresentation;
   /** The D2 source that was drawn, for the expanded view. */
-  readonly source: string;
+  readonly source: D2Source;
   /** Why the text came out the way it did. Empty when nothing went wrong. */
   readonly diagnostics: readonly Diagnostic[];
-  readonly image: DiagramImage | undefined;
+  readonly image: StoredPng | undefined;
   readonly title: SafeTitle | undefined;
   readonly sourceHash: SourceHash;
   readonly lineCount: number;
@@ -138,8 +135,8 @@ async function parseDiagramRequest(request: unknown): Promise<ParsedDiagramReque
   const read = (key: string): unknown =>
     Object.hasOwn(request, key) ? Reflect.get(request, key) : undefined;
 
-  const normalized = normalizeSource(read("source"));
-  const source = parseSafeSource(normalized.text);
+  const parsedSource = parseD2Source(read("source"));
+  const { source } = parsedSource;
   const title = parseTitle(read("title"));
   const profile = parseProfile(read("profile"));
   const representation = parseRepresentation(read("render"));
@@ -147,11 +144,11 @@ async function parseDiagramRequest(request: unknown): Promise<ParsedDiagramReque
   const formats = read("formats");
   const names =
     save !== undefined || formats !== undefined
-      ? parseArtifactNames({ formats, save }, { title, hash: normalized.hash })
+      ? parseArtifactNames({ formats, save }, { title, hash: parsedSource.hash })
       : undefined;
   const target = names === undefined ? undefined : await parseArtifactTarget(read("cwd"), names);
   return {
-    normalized,
+    parsedSource,
     source,
     title,
     profile,
@@ -172,7 +169,7 @@ export async function renderDiagram(
   rasterizer: SvgRasterizer = new ResvgRasterizer(),
 ): Promise<DiagramRendering> {
   const parsed = await parseDiagramRequest(request);
-  const { names, normalized, profile, representation, signal, source, target, title } = parsed;
+  const { names, parsedSource, profile, representation, signal, source, target, title } = parsed;
   throwIfCancelled(signal, "Drawing the diagram");
 
   const notes: string[] = [];
@@ -222,7 +219,7 @@ export async function renderDiagram(
   const image =
     raster === undefined
       ? undefined
-      : await keepImage(raster, title, normalized.hash, notes, signal);
+      : await keepImage(raster, title, parsedSource.hash, notes, signal);
   const willWrite = target !== undefined && contents.size > 0;
 
   let prepared: PreparedDiagram;
@@ -234,10 +231,9 @@ export async function renderDiagram(
     prepared = {
       title,
       profile: profile.name,
-      sourceHash: normalized.hash,
+      sourceHash: parsedSource.hash,
       ...measure(source, MAX_COLUMNS),
-      renderedAs: "source",
-      text: source,
+      display: { kind: "source", content: source },
       source,
       diagnostics: textFailure.diagnostics,
       image,
@@ -246,15 +242,16 @@ export async function renderDiagram(
       contents,
     };
   } else {
-    // Text may have been drawn only to write a .txt sidecar, which must not override the request.
-    const displayText = representation === "source" || text === undefined ? source : text;
+    const display: DisplayRepresentation =
+      representation === "source" || text === undefined
+        ? { kind: "source", content: source }
+        : { kind: "unicode", content: text };
     prepared = {
       title,
       profile: profile.name,
-      sourceHash: normalized.hash,
-      ...measure(displayText, MAX_COLUMNS),
-      renderedAs: representation === "source" || text === undefined ? "source" : "unicode",
-      text: displayText,
+      sourceHash: parsedSource.hash,
+      ...measure(display.content, MAX_COLUMNS),
+      display,
       source,
       diagnostics: [],
       image,
@@ -276,7 +273,7 @@ export async function renderDiagram(
 /** Formats source for readable checked-in artifacts. */
 async function sourceToSave(
   renderer: D2Renderer,
-  source: SafeD2Source,
+  source: D2Source,
   signal: AbortSignal | undefined,
 ): Promise<string> {
   throwIfCancelled(signal, "Formatting the diagram source");
@@ -292,7 +289,7 @@ async function sourceToSave(
   }
   try {
     // Formatter output is untrusted.
-    return `${parseSafeSource(normalizeSource(formatted).text)}\n`;
+    return `${parseD2Source(formatted).source}\n`;
   } catch (error) {
     if (error instanceof DiagramSourceError) {
       return `${source}\n`;
@@ -333,7 +330,7 @@ async function keepImage(
   hash: SourceHash,
   notes: string[],
   signal: AbortSignal | undefined,
-): Promise<DiagramImage | undefined> {
+): Promise<StoredPng | undefined> {
   try {
     const names = parseArtifactNames({ formats: ["png"] }, { title, hash });
     const target = await parseArtifactTarget(undefined, names);
@@ -354,7 +351,7 @@ async function keepImage(
 /** Preserves usable images and artifacts when text rendering fails. */
 async function tryRender(
   renderer: D2Renderer,
-  source: SafeD2Source,
+  source: D2Source,
   signal: AbortSignal | undefined,
 ): Promise<D2Text | TextRenderUnavailableError> {
   try {

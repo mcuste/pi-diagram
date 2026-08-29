@@ -14,8 +14,8 @@ import {
 import { parseSafeSvg, SvgOutputError } from "../svg.js";
 import { findTerminalControl } from "../terminal.js";
 import { type Diagnostic, DiagramSourceError, parseD2Diagnostics } from "./diagnostics.js";
-import type { SafeD2Source } from "./preflight.js";
 import type { LayoutPolicy, RenderProfile } from "./profiles.js";
+import type { D2Source } from "./source.js";
 
 /**
  * Runs the D2 CLI. The source reaches D2 only as a file in a fresh temporary directory: no
@@ -58,7 +58,7 @@ export type RenderedDiagramText = string & { readonly [renderedTextBrand]: true 
 export type RenderedSvg = string & { readonly [renderedSvgBrand]: true };
 
 export interface D2TextRequest {
-  readonly source: SafeD2Source;
+  readonly source: D2Source;
   readonly asciiMode: AsciiMode;
   readonly signal: AbortSignal | undefined;
 }
@@ -69,7 +69,7 @@ export interface D2Text {
 }
 
 export interface D2SvgRequest {
-  readonly source: SafeD2Source;
+  readonly source: D2Source;
   readonly profile: RenderProfile;
   readonly signal: AbortSignal | undefined;
 }
@@ -80,7 +80,7 @@ export interface D2Svg {
 }
 
 export interface D2FormatRequest {
-  readonly source: SafeD2Source;
+  readonly source: D2Source;
   readonly signal: AbortSignal | undefined;
 }
 
@@ -377,7 +377,7 @@ export class D2Cli implements D2Renderer {
   }
 
   private async compile<TOutput>(
-    source: SafeD2Source,
+    source: D2Source,
     signal: AbortSignal | undefined,
     step: {
       readonly argv: readonly D2Argument[];

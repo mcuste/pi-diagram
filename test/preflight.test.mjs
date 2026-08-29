@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { inspect, parseSafeSource } from "../dist/d2/preflight.js";
-import { normalizeSource } from "../dist/normalize.js";
+import { inspect } from "../dist/d2/preflight.js";
+import { parseD2Source } from "../dist/d2/source.js";
 
 function diagnose(source) {
-  return inspect(normalizeSource(source).text);
+  return inspect(source);
 }
 
 function codes(source) {
@@ -136,10 +136,9 @@ test("several problems are reported in source order", () => {
   );
 });
 
-test("parseSafeSource returns the source it accepts and throws on the rest", () => {
-  const normalized = normalizeSource("a -> b");
-  assert.equal(parseSafeSource(normalized.text), "a -> b");
-  assert.throws(() => parseSafeSource(normalizeSource("...@secret").text), {
+test("the source parser accepts safe syntax and refuses unsafe syntax", () => {
+  assert.equal(parseD2Source("a -> b").source, "a -> b");
+  assert.throws(() => parseD2Source("...@secret"), {
     name: "DiagramSourceError",
     message: /D2_IMPORT/,
   });

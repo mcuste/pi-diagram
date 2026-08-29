@@ -311,7 +311,7 @@ function contentFor(
       : rendering.saved[0]?.location === "workspace"
         ? `saved in the repository: ${paths}`
         : `saved outside the repository: ${paths}`;
-  const blocks = drawnHere ? [summaryFor(rendering)] : [rendering.title, rendering.text];
+  const blocks = drawnHere ? [summaryFor(rendering)] : [rendering.title, rendering.display.content];
   return [...blocks, saved, ...notes.map((note) => `note: ${note}`)]
     .filter((block): block is string => Boolean(block))
     .join("\n\n");
@@ -350,9 +350,9 @@ function detailsFor(
     ...(rendering.title === undefined ? {} : { title: rendering.title }),
     profile: rendering.profile,
     requested: parameters.render ?? "auto",
-    renderedAs: rendering.renderedAs,
+    renderedAs: rendering.display.kind,
     ...(rendering.image === undefined ? {} : { image: rendering.image }),
-    textPreview: rendering.text,
+    textPreview: rendering.display.content,
     source: rendering.source,
     ...(rendering.diagnostics.length === 0 ? {} : { diagnostics: rendering.diagnostics }),
     sourceHash: rendering.sourceHash,
@@ -385,10 +385,9 @@ function expandedLines(details: DiagramToolDetails, displayedAs: DisplayedAs): r
 function displayView(details: DiagramToolDetails): DiagramResultView {
   return {
     requested: details.requested,
-    renderedAs: details.renderedAs,
+    display: { format: details.renderedAs, content: details.textPreview },
     image: details.image,
     title: details.title,
-    text: details.textPreview,
     notes: details.notes ?? [],
     details: (displayedAs) => expandedLines(details, displayedAs),
   };

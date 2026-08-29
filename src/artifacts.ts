@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DiagramSourceError, describeInvalidValue } from "./d2/diagnostics.js";
-import { parseSourceHash } from "./normalize.js";
+import { parseSourceHash } from "./d2/source.js";
 import { throwIfCancelled } from "./process.js";
 import { describeCodePoint, findTerminalControl, safeErrorMessage } from "./terminal.js";
 

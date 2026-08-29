@@ -41,7 +41,7 @@ const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0
 
 declare const renderedPngBrand: unique symbol;
 
-/** Bytes that passed `parseRenderedPng`, so they really are a PNG of a known size. */
+/** PNG bytes that passed `parseRenderedPng`. */
 type RenderedPng = Uint8Array & { readonly [renderedPngBrand]: true };
 
 export interface RasterRequest {

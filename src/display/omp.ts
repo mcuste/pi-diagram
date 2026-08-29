@@ -261,7 +261,7 @@ function renderOmpResult(
   }
 
   if (view.requested === "auto") {
-    line(view.text);
+    line(view.display.content);
     if (url !== undefined && view.image !== undefined) {
       muted(`Open PNG: ${hyperlink(basename(view.image.path), url)}`);
     }
@@ -275,7 +275,7 @@ function renderOmpResult(
   }
 
   if (picture === undefined) {
-    line(view.text);
+    line(view.display.content);
   } else {
     container.addChild(picture);
   }

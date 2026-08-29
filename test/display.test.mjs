@@ -82,7 +82,7 @@ test("an OMP host exposes its terminal image capabilities", async () => {
         "await primeDisplay();",
         'if (!displayLoaded()) throw new Error("OMP TUI did not load");',
         'if (!imagesSupported()) throw new Error("OMP image protocol was not detected");',
-        'if (renderDiagramCall({ subject: "diagram", note: "(test)" }, { fg: (_color, text) => text }).render(80)[0] !== "diagram diagram (test)") throw new Error("OMP TUI was not used");',
+        'if (renderDiagramCall({ subject: "diagram", profile: "test", saveDirectory: undefined }, { fg: (_color, text) => text }).render(80)[0] !== "diagram diagram (test)") throw new Error("OMP TUI was not used");',
       ].join("\n"),
     );
     await promisify(execFile)(process.execPath, [entry]);
