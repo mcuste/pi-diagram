@@ -2,31 +2,56 @@
 
 ## Layout
 
+The repository is a pnpm workspace. Each package under `packages/` has its own `package.json`,
+`tsconfig.json`, and `test/` directory, and imports the others by package name. TypeScript project
+references build them in dependency order and reject an import that skips a layer. All four are
+published together under one version.
+
+| Package | Depends on | Contents |
+| --- | --- | --- |
+| `packages/core` | | Shared contracts and parsers that every other package uses |
+| `packages/d2` | core | The render pipeline: preflight, profiles, the D2 CLI run, rasterization |
+| `packages/display` | core | Host TUI loading plus the Pi and Oh My Pi result renderers |
+| `packages/plugin` | core, d2, display | The `@mcuste/pi-diagram` extension both hosts install |
+
+Only `@mcuste/pi-diagram` is published. The other three are private: esbuild bundles them into
+`packages/plugin/dist/extension.js`, which is the file both hosts load and the package's only
+export. Third-party packages stay outside the bundle as normal dependencies.
+
 | Path | Contents |
 | --- | --- |
-| `src/index.ts` | Extension entry point; both hosts load it directly |
-| `src/tools.ts` | The `diagram` tool: schema, approval tier, result shape, and cached description |
-| `src/tool-description.md` | The editable description shown to the model with the tool |
-| `src/guidance.md` | The editable prompt injected before an agent starts |
-| `src/guidance.ts` | Loading the cached prompt and appending it to the host prompt |
-| `src/render.ts` | Unicode, SVG, and PNG generation, fallbacks, and transcript limits |
-| `src/raster.ts` | Drawing the SVG as a PNG, and the checks on what comes back |
-| `src/display/` | Shared terminal image support plus separate Pi and Oh My Pi renderers |
-| `src/terminal.ts` | Control-character parsing for text that reaches a terminal |
-| `src/svg.ts` | Structural SVG and stylesheet parsing before rasterizing or saving |
-| `src/d2/fonts.ts` | Recovering the fonts D2 embeds in its SVG, and what they can draw |
-| `src/normalize.ts` | Source normalization and title parsing |
-| `src/artifacts.ts` | The temp store, workspace path safety, and atomic bundle writes |
-| `src/cache.ts` | The render cache: its key, and the bounded store on disk |
-| `src/d2/preflight.ts` | The safe-subset lexer |
-| `src/d2/profiles.ts` | What each profile does to a picture: engine, theme, and spacing |
-| `src/d2/runner.ts` | D2 discovery, version check, and the isolated render |
-| `src/d2/diagnostics.ts` | The diagnostic vocabulary and parsing of D2's errors |
-| `src/process.ts` | Child process execution |
+| `packages/core/src/diagnostics.ts` | The diagnostic vocabulary and `DiagramSourceError` |
+| `packages/core/src/normalize.ts` | Source normalization and title parsing |
+| `packages/core/src/artifacts.ts` | The temp store, workspace path safety, and atomic bundle writes |
+| `packages/core/src/cache.ts` | The render cache: its key, and the bounded store on disk |
+| `packages/core/src/svg.ts` | Structural SVG and stylesheet parsing before rasterizing or saving |
+| `packages/core/src/png.ts` | The checks on PNG bytes before they are stored or displayed |
+| `packages/core/src/terminal.ts` | Control-character parsing for text that reaches a terminal |
+| `packages/core/src/process.ts` | Child process execution |
+| `packages/d2/src/render.ts` | Unicode, SVG, and PNG generation, fallbacks, and transcript limits |
+| `packages/d2/src/runner.ts` | D2 discovery, version check, and the isolated render |
+| `packages/d2/src/preflight.ts` | The safe-subset lexer |
+| `packages/d2/src/profiles.ts` | What each profile does to a picture: engine, theme, and spacing |
+| `packages/d2/src/diagnostics.ts` | Parsing of D2's errors into the shared vocabulary |
+| `packages/d2/src/fonts.ts` | Recovering the fonts D2 embeds in its SVG, and what they can draw |
+| `packages/d2/src/raster.ts` | Drawing the SVG as a PNG with resvg, and the image cache |
+| `packages/display/src/` | Shared terminal image support plus separate Pi and Oh My Pi renderers |
+| `packages/plugin/src/index.ts` | Extension entry point, and the input to the bundle |
+| `packages/plugin/src/tools.ts` | The `diagram` tool: schema, approval tier, result shape, and cached description |
+| `packages/plugin/src/tool-description.md` | The editable description shown to the model with the tool |
+| `packages/plugin/src/guidance.md` | The editable prompt injected before an agent starts |
+| `packages/plugin/src/guidance.ts` | Loading the cached prompt and appending it to the host prompt |
+| `packages/*/test/*.test.mjs` | Deterministic suites, run by `pnpm test` |
+| `packages/plugin/test/*.e2e.mjs` | Scenarios against the real D2 CLI, run by `pnpm test:integration` |
+| `test/fixtures/` | Diagram fixtures shared by every package, and unsafe source under `security/` |
+| `scripts/bundle.mjs` | Builds the single-file extension with esbuild |
 | `scripts/preview.mjs` | Draws one source under every profile, for comparing them by eye |
-| `test/*.test.mjs` | Deterministic suites, run by `pnpm test` |
-| `test/*.e2e.mjs` | Scenarios against the real D2 CLI, run by `pnpm test:integration` |
-| `test/fixtures/` | Diagram fixtures, and unsafe source under `security/` |
+
+Each package exports its public API from `src/index.ts`, and `exports` in its `package.json` points
+at the built `dist/index.js`. Tests import their own package through `dist/` and other packages by
+name, so a test can reach internals of the package it belongs to and only the public API of the
+rest. The bundle is tested separately: the extension's package test loads it and checks that it
+imports nothing but its dependencies and Node built-ins.
 
 Validation is written as parsing, not checking. Each step turns loose input into a type that
 records what was proven about it: `parseDiagramRequest` produces a typed request,
@@ -44,7 +69,7 @@ cache operation is best-effort, and a corrupt entry is drawn again instead of be
 Rendering the same diagram twice costs 642ms then 60ms, and only the version probe still runs.
 
 The drawn image is kept in the same store, keyed on the SVG it came from, the installed resvg
-version, and the scale and bounds in `src/raster.ts`. It is held as base64 behind the sizes it was
+version, and the scale and bounds in `packages/d2/src/raster.ts`. It is held as base64 behind the sizes it was
 drawn at, and a hit goes back through `parseRenderedPng`, so a corrupt entry is drawn again rather
 than displayed. The parser checks the PNG signature, every chunk boundary and CRC, one IHDR, at
 least one IDAT, and a final IEND. Nothing is stored when the resvg version cannot be read, because
@@ -57,18 +82,18 @@ theme or spacing, because D2 draws text in character cells.
 
 ELK is the engine for every profile except `tree`, which uses dagre. That is a deliberate
 exception to ADR-004: dagre draws a hierarchy the way one is normally drawn. The engines expose
-different spacing options, so `LayoutPolicy` is a union and `src/d2/runner.ts` maps each case to
+different spacing options, so `LayoutPolicy` is a union and `packages/d2/src/runner.ts` maps each case to
 its own flags. D2 ignores the other engine's flags, so they are not passed.
 
 `--elk-algorithm mrtree` looks right for `tree` but is not usable: in d2 0.8.1 it places the nodes
 and draws no edges. `radial` never returns, and D2's `--timeout` does not stop it; only the
-process timeout in `src/d2/runner.ts` does.
+process timeout in `packages/d2/src/runner.ts` does.
 
 Images take the same shape. `parseEmbeddedFonts` produces fonts whose table directory was checked,
 and `parseRenderedPng` produces bytes from a complete PNG of the size that was asked for. The
 display layer parses those bytes again after reading the temp file. D2's own PNG export needs a
 headless browser that Playwright downloads on first use, which ADR-011 rules out, so
-`src/raster.ts` draws the SVG this tool already produced.
+`packages/d2/src/raster.ts` draws the SVG this tool already produced.
 
 `renderDiagram` prepares Unicode, a validated SVG, and a raster PNG before it commits any workspace
 file. The commit step only receives a complete prepared result. An optional SVG or PNG failure
@@ -97,14 +122,16 @@ In a terminal the model gets a summary line and the diagram travels in `details`
 JSON modes return Unicode in `content`. `renderCall` draws the waiting row from the arguments and
 leaves the source out.
 
-Pi loads TypeScript through [jiti](https://github.com/unjs/jiti) and Oh My Pi runs it natively, so
-`package.json` points both `pi.extensions` and `omp.extensions` at `src/index.ts` and no build step
-is needed to install from npm, git, or a local path. The `dist/` build exists as a type check and
-for anyone importing the package directly.
+`packages/plugin/package.json` points both `pi.extensions` and `omp.extensions` at
+`dist/extension.js`. The root `package.json` carries the same keys with the path
+`packages/plugin/dist/extension.js`, for a host that installs the repository from git or a local
+path. The root `prepare` script builds on every `pnpm install`, so such a checkout has its bundle
+as soon as dependencies are installed. The bundle ships with a source map, so a stack trace names
+the TypeScript source.
 
-The tool description lives in `src/tool-description.md`. `primeDiagramDescription` reads it once
+The tool description lives in `packages/plugin/src/tool-description.md`. `primeDiagramDescription` reads it once
 before the tool is registered. It owns D2 syntax, limits, and profile and shape selection. The
-injected prompt lives in `src/guidance.md` and owns when to draw and how to shape the response.
+injected prompt lives in `packages/plugin/src/guidance.md` and owns when to draw and how to shape the response.
 `registerDiagramGuidance` reads it once before installing the `before_agent_start` hook. The build
 copies both files into `dist` for direct package imports.
 
@@ -137,9 +164,12 @@ Disable discovered extensions so an installed copy of this package cannot confli
 working copy:
 
 ```bash
-pi -ne -e ./src/index.ts
-omp --no-extensions -e ./src/index.ts
+pnpm build
+pi -ne -e ./packages/plugin/dist/extension.js
+omp --no-extensions -e ./packages/plugin/dist/extension.js
 ```
+
+Run `pnpm build` again after editing, because the hosts load the bundle.
 
 Run a diagram. In Pi, press `Ctrl+O` to replace Unicode in the tool row. In OMP, verify chronological
 Unicode, then open and close the latest diagram's fitted PNG overlay with `Ctrl+O`.
@@ -183,9 +213,11 @@ D2 installed from the pinned module version. The Go checksum database verifies w
 Releases are published by `.github/workflows/release.yml`, triggered by pushing a `v<version>` tag.
 It runs as three jobs:
 
-1. **verify** checks that the tag matches the version in `package.json`, then runs `pnpm check`.
-2. **publish** publishes to npm. It runs in the `npm-publish` environment, so a protection rule there
-   can require manual approval before anything is published.
+1. **verify** checks that the tag matches the version in `packages/plugin/package.json`, then runs
+   `pnpm check`.
+2. **publish** publishes `@mcuste/pi-diagram` to npm. The other workspace packages are private and
+   travel inside its bundle. It runs in the `npm-publish` environment, so a protection rule there can
+   require manual approval before anything is published.
 3. **github-release** creates the GitHub release, using the matching `CHANGELOG.md` section as its
    notes.
 
@@ -193,9 +225,9 @@ To cut a release, run `pnpm release <version>` from a clean `main`. It refuses t
 version is above the current one, the worktree is clean, `main` is checked out, the tag is free,
 and `CHANGELOG.md` has entries under `## [Unreleased]`. It then:
 
-1. Sets the version in `package.json` and retitles the `Unreleased` section to
-   `## [<version>] - <date>`.
-2. Runs `pnpm check`, restoring both files and stopping if the gate fails.
+1. Sets the version in the root `package.json` and in every `packages/*/package.json`, and retitles
+   the `Unreleased` section to `## [<version>] - <date>`.
+2. Runs `pnpm check`, restoring the manifests and the changelog and stopping if the gate fails.
 3. Commits `chore: release <version>` and creates the `v<version>` tag.
 
 Pushing stays separate, because that is where the release becomes public:

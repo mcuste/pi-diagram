@@ -33,7 +33,7 @@ jobs:
           go-version: "1.25"
           cache: false
       # The integration suite needs the real CLI. A pinned module version keeps render output
-      # stable, and the Go checksum database verifies the fetch. See src/d2/runner.ts for the
+      # stable, and the Go checksum database verifies the fetch. See packages/d2/src/runner.ts for the
       # version floor.
       - name: Install pinned D2 CLI
         run: go install github.com/d2lang/d2@v0.8.1

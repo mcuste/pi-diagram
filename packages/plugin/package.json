@@ -1,0 +1,83 @@
+{
+  "name": "@mcuste/pi-diagram",
+  "version": "0.5.1",
+  "description": "Makes Pi and Oh My Pi agents actively explain complex topics with token-efficient D2 diagrams",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "oh-my-pi",
+    "omp",
+    "extension",
+    "diagram",
+    "d2",
+    "architecture-diagram",
+    "sequence-diagram",
+    "svg"
+  ],
+  "license": "MIT",
+  "author": "mcuste",
+  "homepage": "https://github.com/mcuste/pi-diagram#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mcuste/pi-diagram.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mcuste/pi-diagram/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": "./dist/extension.js",
+  "files": [
+    "dist/extension.js",
+    "dist/extension.js.map",
+    "dist/guidance.md",
+    "dist/tool-description.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "pnpm -w build",
+    "test": "node --test test/*.test.mjs",
+    "test:integration": "node --test test/*.e2e.mjs",
+    "prepack": "pnpm -w build"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@xmldom/xmldom": "^0.9.12"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-tui": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@mcuste/pi-diagram-core": "workspace:*",
+    "@mcuste/pi-diagram-d2": "workspace:*",
+    "@mcuste/pi-diagram-display": "workspace:*",
+    "@earendil-works/pi-tui": "^0.84.2",
+    "typebox": "^1.3.15"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/extension.js"
+    ],
+    "video": "https://cdn.jsdelivr.net/gh/mcuste/pi-diagram@main/docs/demo/pi-diagram-demo.mp4",
+    "image": "https://cdn.jsdelivr.net/gh/mcuste/pi-diagram@main/docs/demo/pi-diagram-preview.png"
+  },
+  "omp": {
+    "extensions": [
+      "./dist/extension.js"
+    ],
+    "video": "https://cdn.jsdelivr.net/gh/mcuste/pi-diagram@main/docs/demo/pi-diagram-demo.mp4",
+    "image": "https://cdn.jsdelivr.net/gh/mcuste/pi-diagram@main/docs/demo/pi-diagram-preview.png"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@mcuste/pi-diagram-core",
+  "version": "0.5.1",
+  "private": true,
+  "description": "Shared contracts for pi-diagram: diagnostics, source normalization, artifact writes, caching, and parsers for SVG and PNG output",
+  "license": "MIT",
+  "author": "mcuste",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.9.12"
+  }
+}

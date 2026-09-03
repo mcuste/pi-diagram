@@ -3,3 +3,6 @@ dist/
 .host-test/
 test/.integration-*/
 *.tgz
+*.tsbuildinfo
+packages/plugin/LICENSE
+packages/plugin/README.md

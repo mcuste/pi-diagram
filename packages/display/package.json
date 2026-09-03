@@ -1,0 +1,29 @@
+{
+  "name": "@mcuste/pi-diagram-display",
+  "version": "0.5.1",
+  "private": true,
+  "description": "Terminal display layer for pi-diagram: host TUI loading plus the Pi and Oh My Pi result renderers",
+  "license": "MIT",
+  "author": "mcuste",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@mcuste/pi-diagram-core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-tui": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-tui": {
+      "optional": true
+    }
+  }
+}

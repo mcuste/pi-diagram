@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The repository is now a pnpm workspace with four packages: core, d2, display, and the
+  `@mcuste/pi-diagram` extension. Only the extension is published. esbuild bundles the other
+  three into `dist/extension.js`, which is now the file both hosts load and the package's only
+  export. The `src` directory is no longer part of the published package.
+- `pnpm install` now builds the bundle, so a checkout installed from a local path or git works
+  without a separate build step.
+
 ## [0.5.1] - 2026-08-26
 
 ### Added

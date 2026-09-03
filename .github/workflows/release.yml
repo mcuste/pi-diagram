@@ -36,7 +36,7 @@ jobs:
       - name: Verify the tag matches the package version
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          pkg="$(node -p "require('./package.json').version")"
+          pkg="$(node -p "require('./packages/plugin/package.json').version")"
           test "$tag" = "$pkg" || {
             echo "tag $tag does not match package version $pkg" >&2
             exit 1
@@ -69,7 +69,9 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
       # pnpm requests an OIDC token from GitHub and exchanges it with npm.
       # There is no NPM_TOKEN, and npm attaches provenance automatically.
-      - run: pnpm publish --access public --no-git-checks
+      # Only the extension is published. The other workspace packages are
+      # private and travel inside its bundle.
+      - run: pnpm --filter @mcuste/pi-diagram publish --access public --no-git-checks
 
   github-release:
     needs: publish

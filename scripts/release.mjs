@@ -14,6 +14,12 @@ import { fileURLToPath } from "node:url";
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const packagePath = join(packageRoot, "package.json");
 const changelogPath = join(packageRoot, "CHANGELOG.md");
+/** Every package is released together, so all manifests carry the same version. */
+const WORKSPACE_PACKAGES = ["core", "d2", "display", "plugin"];
+const manifestPaths = [
+  packagePath,
+  ...WORKSPACE_PACKAGES.map((name) => join(packageRoot, "packages", name, "package.json")),
+];
 const UNRELEASED_HEADING = "## [Unreleased]";
 const RELEASE_BRANCH = "main";
 const VERSION_LINE = /^(\s*"version":\s*")([^"]*)(")/m;
@@ -68,10 +74,16 @@ if (!requested || args.some((a) => a.startsWith("-") && a !== "--push")) {
   fail("usage: pnpm release <version> [--push]");
 }
 
-const manifest = readFileSync(packagePath, "utf8");
-const currentVersion = VERSION_LINE.exec(manifest)?.[2];
+const manifests = manifestPaths.map((path) => readFileSync(path, "utf8"));
+const currentVersion = VERSION_LINE.exec(manifests[0])?.[2];
 if (!currentVersion) {
   fail("package.json has no version field.");
+}
+for (const [index, manifest] of manifests.entries()) {
+  const version = VERSION_LINE.exec(manifest)?.[2];
+  if (version !== currentVersion) {
+    fail(`${manifestPaths[index]} is at ${version}, not ${currentVersion}.`);
+  }
 }
 if (
   !isAfter(
@@ -99,7 +111,9 @@ if (!/^\s*-\s+\S/mu.test(unreleasedSection(changelog))) {
   fail(`${UNRELEASED_HEADING} has no entries, so there is nothing to release.`);
 }
 
-writeFileSync(packagePath, manifest.replace(VERSION_LINE, `$1${requested}$3`));
+for (const [index, manifest] of manifests.entries()) {
+  writeFileSync(manifestPaths[index], manifest.replace(VERSION_LINE, `$1${requested}$3`));
+}
 writeFileSync(
   changelogPath,
   changelog.replace(UNRELEASED_HEADING, `## [${requested}] - ${today()}`),
@@ -109,11 +123,11 @@ console.log(`release: prepared ${requested}, running the full gate.`);
 try {
   execFileSync("pnpm", ["check"], { cwd: packageRoot, stdio: "inherit" });
 } catch {
-  git("checkout", "--", "package.json", "CHANGELOG.md");
-  fail("pnpm check failed. package.json and CHANGELOG.md were restored.");
+  git("checkout", "--", ...manifestPaths, changelogPath);
+  fail("pnpm check failed. The manifests and CHANGELOG.md were restored.");
 }
 
-git("add", "package.json", "CHANGELOG.md");
+git("add", ...manifestPaths, changelogPath);
 git("commit", "-m", `chore: release ${requested}`);
 git("tag", tag);
 

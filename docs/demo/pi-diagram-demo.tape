@@ -26,7 +26,7 @@ Sleep 4s
 ScrollDown@150ms 18
 Sleep 1s
 
-Type "How is src/tools.ts organized at a high level?"
+Type "How is packages/plugin/src/tools.ts organized at a high level?"
 Enter
 Sleep 15s
 Sleep 2s

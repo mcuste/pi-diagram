@@ -1,19 +1,8 @@
 {
-  "name": "@mcuste/pi-diagram",
+  "name": "pi-diagram-workspace",
   "version": "0.5.1",
-  "description": "Makes Pi and Oh My Pi agents actively explain complex topics with token-efficient D2 diagrams",
-  "keywords": [
-    "pi-package",
-    "pi",
-    "oh-my-pi",
-    "omp",
-    "extension",
-    "diagram",
-    "d2",
-    "architecture-diagram",
-    "sequence-diagram",
-    "svg"
-  ],
+  "private": true,
+  "description": "Workspace for the pi-diagram packages",
   "license": "MIT",
   "author": "mcuste",
   "homepage": "https://github.com/mcuste/pi-diagram#readme",
@@ -29,79 +18,99 @@
   "engines": {
     "node": ">=22"
   },
-  "exports": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": [
-    "dist",
-    "src",
-    "README.md",
-    "LICENSE"
-  ],
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/copy-markdown.mjs",
+    "build": "tsc -b tsconfig.json && node scripts/bundle.mjs && node scripts/copy-assets.mjs",
     "check": "pnpm quality && pnpm package:check && pnpm test && pnpm test:integration && pnpm deadcode && pnpm security",
     "deadcode": "knip",
     "fix": "biome check --write .",
     "format": "biome format --write .",
     "lint": "biome lint .",
-    "package:check": "pnpm build && publint",
+    "package:check": "pnpm build && publint packages/plugin",
+    "prepare": "pnpm build",
     "preview": "pnpm build && node scripts/preview.mjs",
-    "prepack": "pnpm build",
     "quality": "biome check .",
     "release": "node scripts/release.mjs",
     "security": "pnpm audit --audit-level high",
-    "test": "pnpm build && node --test test/*.test.mjs",
-    "test:integration": "pnpm build && node --test test/*.e2e.mjs"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-tui": "*",
-    "typebox": "*"
+    "test": "pnpm build && pnpm -r test",
+    "test:integration": "pnpm build && pnpm -r test:integration"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.9",
-    "@earendil-works/pi-tui": "^0.84.2",
     "@types/node": "^26.2.0",
+    "esbuild": "0.28.2",
     "knip": "6.32.2",
     "publint": "0.3.23",
-    "typebox": "^1.3.15",
     "typescript": "^7.0.2"
   },
   "knip": {
-    "entry": [
-      "test/**/*.test.mjs",
-      "test/**/*.e2e.mjs",
-      "scripts/*.mjs"
-    ],
-    "project": [
-      "src/**/*.ts",
-      "test/**/*.mjs",
-      "scripts/*.mjs"
-    ]
+    "workspaces": {
+      ".": {
+        "entry": [
+          "scripts/*.mjs"
+        ],
+        "project": [
+          "scripts/*.mjs",
+          "test/fixtures/*.mjs"
+        ]
+      },
+      "packages/core": {
+        "entry": [
+          "test/**/*.test.mjs"
+        ],
+        "project": [
+          "src/**/*.ts",
+          "test/**/*.mjs"
+        ]
+      },
+      "packages/d2": {
+        "entry": [
+          "test/**/*.test.mjs"
+        ],
+        "project": [
+          "src/**/*.ts",
+          "test/**/*.mjs"
+        ]
+      },
+      "packages/display": {
+        "entry": [
+          "test/**/*.test.mjs"
+        ],
+        "project": [
+          "src/**/*.ts",
+          "test/**/*.mjs"
+        ],
+        "ignoreDependencies": [
+          "@earendil-works/pi-tui"
+        ]
+      },
+      "packages/plugin": {
+        "entry": [
+          "test/**/*.test.mjs",
+          "test/**/*.e2e.mjs"
+        ],
+        "project": [
+          "src/**/*.ts",
+          "test/**/*.mjs"
+        ],
+        "ignoreDependencies": [
+          "@resvg/resvg-js",
+          "@xmldom/xmldom"
+        ]
+      }
+    }
   },
   "pi": {
     "extensions": [
-      "./src/index.ts"
+      "./packages/plugin/dist/extension.js"
     ],
     "video": "https://cdn.jsdelivr.net/gh/mcuste/pi-diagram@main/docs/demo/pi-diagram-demo.mp4",
     "image": "https://cdn.jsdelivr.net/gh/mcuste/pi-diagram@main/docs/demo/pi-diagram-preview.png"
   },
   "omp": {
     "extensions": [
-      "./src/index.ts"
+      "./packages/plugin/dist/extension.js"
     ],
     "video": "https://cdn.jsdelivr.net/gh/mcuste/pi-diagram@main/docs/demo/pi-diagram-demo.mp4",
     "image": "https://cdn.jsdelivr.net/gh/mcuste/pi-diagram@main/docs/demo/pi-diagram-preview.png"
-  },
-  "dependencies": {
-    "@resvg/resvg-js": "^2.6.2",
-    "@xmldom/xmldom": "^0.9.12"
-  },
-  "peerDependenciesMeta": {
-    "@earendil-works/pi-tui": {
-      "optional": true
-    }
   }
 }

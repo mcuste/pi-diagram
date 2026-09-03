@@ -12,5 +12,5 @@ done
 
 cd "$project_root"
 omp \
-  --extension "$project_root/src/index.ts" \
+  --extension "$project_root/packages/plugin/dist/extension.js" \
   --no-session

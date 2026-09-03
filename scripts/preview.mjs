@@ -5,9 +5,7 @@
  */
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import { PROFILE_NAMES } from "../dist/d2/profiles.js";
-import { D2Cli } from "../dist/d2/runner.js";
-import { renderDiagram } from "../dist/render.js";
+import { D2Cli, PROFILE_NAMES, renderDiagram } from "../packages/d2/dist/index.js";
 
 const [sourceArgument = "test/fixtures/containers.d2", outputArgument = "/tmp/diagram-preview"] =
   process.argv.slice(2);

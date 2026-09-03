@@ -1,0 +1,22 @@
+{
+  "name": "@mcuste/pi-diagram-d2",
+  "version": "0.5.1",
+  "private": true,
+  "description": "D2 rendering pipeline for pi-diagram: safe-subset preflight, profiles, the isolated D2 CLI run, and PNG rasterization",
+  "license": "MIT",
+  "author": "mcuste",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@mcuste/pi-diagram-core": "workspace:*",
+    "@resvg/resvg-js": "^2.6.2"
+  }
+}
