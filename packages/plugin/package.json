@@ -1,6 +1,6 @@
 {
   "name": "@mcuste/pi-diagram",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Makes Pi and Oh My Pi agents actively explain complex topics with token-efficient D2 diagrams",
   "keywords": [
     "pi-package",
