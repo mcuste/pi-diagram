@@ -6,7 +6,19 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { tuiSpecifier } from "../dist/shared.js";
+import { TextComponent, tuiSpecifier } from "../dist/shared.js";
+
+test("wide Unicode diagrams are bounded by the supplied terminal width", () => {
+  const terminalWidth = 40;
+  const diagram = new TextComponent(`┌${"─".repeat(98)}┐`);
+  const ansiCsi = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
+  const withoutAnsi = (line) => line.replace(ansiCsi, "");
+
+  assert.equal(
+    diagram.render(terminalWidth).every((line) => withoutAnsi(line).length <= terminalWidth),
+    true,
+  );
+});
 
 /** A local checkout has its own copy of the library, which wins by bare name. */
 test("the terminal library is taken from the host, not from this package", async () => {
