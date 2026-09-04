@@ -25,5 +25,8 @@
     "@earendil-works/pi-tui": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-tui": "^0.84.2"
   }
 }

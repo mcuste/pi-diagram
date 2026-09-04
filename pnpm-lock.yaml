@@ -44,12 +44,13 @@ importers:
 
   packages/display:
     dependencies:
-      '@earendil-works/pi-tui':
-        specifier: '*'
-        version: 0.84.2
       '@mcuste/pi-diagram-core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      '@earendil-works/pi-tui':
+        specifier: ^0.84.2
+        version: 0.84.2
 
   packages/plugin:
     dependencies:

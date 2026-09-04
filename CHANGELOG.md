@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A Unicode diagram wider than the terminal no longer stops Pi. Each rendered line is cut to the
+  terminal width, with the host's own truncation function when it is available.
+
 ## [0.6.0] - 2026-09-03
 
 ### Changed

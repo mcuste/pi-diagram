@@ -78,9 +78,6 @@
         "project": [
           "src/**/*.ts",
           "test/**/*.mjs"
-        ],
-        "ignoreDependencies": [
-          "@earendil-works/pi-tui"
         ]
       },
       "packages/plugin": {

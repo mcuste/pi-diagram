@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { isSessionArtifactPath, parseRenderedPng } from "@mcuste/pi-diagram-core";
 import type { Component, DiagramCallView, DisplayImage, DisplayTheme } from "./contracts.js";
+import { truncateWithoutHost } from "./truncate.js";
 
 export const PREVIEW_MAX_WIDTH_CELLS = 60;
 export const PREVIEW_MAX_HEIGHT_CELLS = 18;
@@ -30,6 +31,7 @@ interface TuiModule {
   readonly getCapabilities?: () => unknown;
   readonly TERMINAL?: unknown;
   readonly hyperlink?: (text: string, url: string) => string;
+  readonly truncateToWidth?: (text: string, width: number, ellipsis?: string) => string;
   readonly Image: new (
     base64Data: string,
     mimeType: string,
@@ -42,9 +44,22 @@ interface TuiModule {
 export class TextComponent implements Component {
   constructor(private readonly text: string) {}
 
-  render(): string[] {
-    return this.text.split("\n");
+  render(width: number): string[] {
+    return this.text.split("\n").map((line) => truncateLine(line, width));
   }
+}
+
+const ELLIPSIS = "…";
+
+/** Pi stops when a rendered line is wider than the terminal. */
+function truncateLine(text: string, width: number): string {
+  if (width <= 0) {
+    return "";
+  }
+  const truncate = tui?.truncateToWidth;
+  return truncate === undefined
+    ? truncateWithoutHost(text, width)
+    : truncate(text, width, ELLIPSIS);
 }
 
 export class StackComponent implements Component {
@@ -80,7 +95,7 @@ export function tuiSpecifier(entry: string | undefined): string | undefined {
   return undefined;
 }
 
-/** Load terminal capabilities before tool rendering. */
+/** Load the host TUI and run its terminal detection before the first render. */
 export function primeDisplay(): Promise<void> {
   if (tui !== undefined) {
     return Promise.resolve();
@@ -90,12 +105,8 @@ export function primeDisplay(): Promise<void> {
   }
   const specifier = tuiSpecifier(process.argv[1]);
   tuiLoading = loadTui(specifier).then((module) => {
-    const candidate = parseTuiModule(module);
-    if (candidate !== undefined && capabilities(candidate) !== undefined) {
-      tui = candidate;
-    } else {
-      readCapabilities(module);
-    }
+    tui = parseTuiModule(module);
+    readCapabilities(module);
   });
   return tuiLoading;
 }
@@ -132,9 +143,11 @@ export function createImage(
   options: ImageOptions,
 ): Component | undefined {
   const module = tui;
+  const supported = module === undefined ? undefined : capabilities(module);
   if (
     module === undefined ||
-    capabilities(module)?.images === null ||
+    supported === undefined ||
+    supported.images === null ||
     !isSessionArtifactPath(image.path)
   ) {
     return undefined;
