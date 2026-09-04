@@ -1,6 +1,6 @@
 {
   "name": "@mcuste/pi-diagram-d2",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "D2 rendering pipeline for pi-diagram: safe-subset preflight, profiles, the isolated D2 CLI run, and PNG rasterization",
   "license": "MIT",

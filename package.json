@@ -1,6 +1,6 @@
 {
   "name": "pi-diagram-workspace",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "Workspace for the pi-diagram packages",
   "license": "MIT",

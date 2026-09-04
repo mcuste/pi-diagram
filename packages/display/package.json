@@ -1,6 +1,6 @@
 {
   "name": "@mcuste/pi-diagram-display",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "Terminal display layer for pi-diagram: host TUI loading plus the Pi and Oh My Pi result renderers",
   "license": "MIT",
