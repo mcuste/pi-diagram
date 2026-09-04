@@ -30,6 +30,7 @@ interface TuiModule {
   readonly getCapabilities?: () => unknown;
   readonly TERMINAL?: unknown;
   readonly hyperlink?: (text: string, url: string) => string;
+  readonly truncateToWidth?: (text: string, width: number, ellipsis?: string) => string;
   readonly Image: new (
     base64Data: string,
     mimeType: string,
@@ -42,8 +43,8 @@ interface TuiModule {
 export class TextComponent implements Component {
   constructor(private readonly text: string) {}
 
-  render(): string[] {
-    return this.text.split("\n");
+  render(width: number): string[] {
+    return this.text.split("\n").map((line) => tui?.truncateToWidth?.(line, width) ?? line);
   }
 }
 

@@ -70,6 +70,7 @@ test("an OMP host exposes its terminal image capabilities", async () => {
       join(tui, "index.js"),
       [
         'export const TERMINAL = { imageProtocol: "\\x1b_G", hyperlinks: true };',
+        "export const truncateToWidth = (text, width) => text.slice(0, width);",
         "export class Text { constructor(text = '') { this.text = text; } render() { return [this.text]; } }",
         "export class Container { addChild() {} render() { return []; } }",
         "export class Image { render() { return []; } }",
@@ -83,6 +84,7 @@ test("an OMP host exposes its terminal image capabilities", async () => {
         'if (!displayLoaded()) throw new Error("OMP TUI did not load");',
         'if (!imagesSupported()) throw new Error("OMP image protocol was not detected");',
         'if (renderDiagramCall({ subject: "diagram", profile: "test", saveDirectory: undefined }, { fg: (_color, text) => text }).render(80)[0] !== "diagram diagram (test)") throw new Error("OMP TUI was not used");',
+        'if (renderDiagramCall({ subject: "long diagram", profile: "test", saveDirectory: undefined }, { fg: (_color, text) => text }).render(8)[0] !== "diagram ") throw new Error("Diagram output was not truncated");',
       ].join("\n"),
     );
     await promisify(execFile)(process.execPath, [entry]);
