@@ -3,12 +3,10 @@ import type { StoredPng } from "@mcuste/pi-diagram-core";
 export interface Component {
   render(width: number): string[];
   /**
-   * Clear cached rendering state if any. The host may call this on theme
-   * changes, focus, resize, and session resume. Pi's MouseRegion invokes it
-   * directly (unlike Container, which uses optional chaining), so components
-   * that can be wrapped by the host should implement it.
+   * Drop cached lines. Hosts call this on theme change, resize and resume.
+   * A host that does not find it crashes, so every component must have it.
    */
-  invalidate?(): void;
+  invalidate(): void;
 }
 
 export interface DisplayTheme {

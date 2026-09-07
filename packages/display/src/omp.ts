@@ -161,7 +161,7 @@ class OmpPngOverlay implements Component {
   }
 
   invalidate(): void {
-    this.content.invalidate?.();
+    this.content.invalidate();
   }
 
   handleInput(data: string): void {

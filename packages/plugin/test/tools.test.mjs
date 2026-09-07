@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import { PROFILE_NAMES, TextRenderUnavailableError } from "@mcuste/pi-diagram-d2";
 import { Value } from "typebox/value";
+import { HostRegion } from "../../../test/fixtures/host-region.mjs";
 import { png } from "../../../test/fixtures/png.mjs";
 import { primeDiagramDescription, registerDiagramTools } from "../dist/tools.js";
 
@@ -448,6 +449,32 @@ test("explicit render modes keep their selected display across expansion", async
         assert.doesNotMatch(drawn, /Ctrl\+O:/, render);
       } else {
         assert.equal(drawn.includes(expected.hint), true, render);
+      }
+    }
+  });
+});
+
+test("a resumed session can invalidate a drawn diagram, image and all", async () => {
+  const { primeDisplay } = await import("@mcuste/pi-diagram-display");
+  await primeDisplay();
+  const tool = registerWithRasterizer();
+
+  await withCapabilities({ images: "kitty", hyperlinks: true }, async () => {
+    for (const render of ["auto", "image", "unicode", "source"]) {
+      const args = { source: "a -> b", title: "Request path", render };
+      const result = await drawInTui(tool, args);
+      for (const expanded of [false, true]) {
+        const regions = [
+          new HostRegion(tool.renderCall(args, theme)),
+          new HostRegion(
+            tool.renderResult(result, { expanded }, theme, { showImages: true, state: {} }),
+          ),
+        ];
+        for (const region of regions) {
+          const before = region.render(120);
+          assert.doesNotThrow(() => region.invalidate(), `${render}, expanded ${expanded}`);
+          assert.deepEqual(region.render(120), before, `${render}, expanded ${expanded}`);
+        }
       }
     }
   });

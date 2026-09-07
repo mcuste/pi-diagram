@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { HostRegion } from "../../../test/fixtures/host-region.mjs";
 import { piDisplay, primeDisplay, updateOmpDiagramOverlay } from "../dist/index.js";
 import { StackComponent, TextComponent, tuiSpecifier } from "../dist/shared.js";
 import { truncateWithoutHost } from "../dist/truncate.js";
@@ -194,7 +195,14 @@ test("a host without truncateToWidth gets fitted lines that keep their colors", 
   );
 });
 
-test("invalidate is safe on every component the host can wrap", async () => {
+/** The stack calls invalidate on the image the host built, so the host must supply one. */
+test("the host image widget carries an invalidate for the stack to call", async () => {
+  const { Image } = await import("@earendil-works/pi-tui");
+  assert.equal(typeof Image.prototype.render, "function");
+  assert.equal(typeof Image.prototype.invalidate, "function");
+});
+
+test("the host can invalidate every component it wraps", async () => {
   await primeDisplay();
   const view = {
     requested: "unicode",
@@ -208,21 +216,21 @@ test("invalidate is safe on every component the host can wrap", async () => {
   for (const expanded of [false, true]) {
     const options = { expanded, isPartial: false };
     const context = piDisplay.resolveContext(view, options, undefined);
-    const components = [
-      piDisplay.renderCall(call, colored),
-      piDisplay.renderResult(view, options, colored, context),
+    const wrapped = [
+      new HostRegion(piDisplay.renderCall(call, colored)),
+      new HostRegion(piDisplay.renderResult(view, options, colored, context)),
     ];
     for (const width of [1, 8, 34, 80]) {
-      for (const component of components) {
-        component.render(width);
-        assert.doesNotThrow(() => component.invalidate(), `expanded ${expanded}, width ${width}`);
-        component.render(width);
+      for (const region of wrapped) {
+        region.render(width);
+        assert.doesNotThrow(() => region.invalidate(), `expanded ${expanded}, width ${width}`);
+        region.render(width);
       }
     }
   }
 });
 
-test("invalidate propagates through nested stacks and skips render-only children", () => {
+test("invalidate reaches nested children and tolerates a host child without it", () => {
   let cleared = 0;
   const root = new StackComponent();
   const nested = new StackComponent();
@@ -261,6 +269,7 @@ test("the OMP overlay invalidates the content it wraps", () => {
   const image = { path: "/not-a-session-artifact.png", widthPx: 4, heightPx: 4 };
   updateOmpDiagramOverlay(context, { image, title: "preview" }, true);
   assert.ok(overlay !== undefined, "the overlay should have been created");
-  overlay.render(80);
-  assert.doesNotThrow(() => overlay.invalidate());
+  const region = new HostRegion(overlay);
+  region.render(80);
+  assert.doesNotThrow(() => region.invalidate());
 });

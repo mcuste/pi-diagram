@@ -76,6 +76,7 @@ export class StackComponent implements Component {
     return this.children.flatMap((child) => child.render(width));
   }
 
+  /** The host builds the image child, so tolerate one that does not invalidate. */
   invalidate(): void {
     for (const child of this.children) {
       child.invalidate?.();
