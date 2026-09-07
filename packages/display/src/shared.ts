@@ -47,6 +47,9 @@ export class TextComponent implements Component {
   render(width: number): string[] {
     return this.text.split("\n").map((line) => truncateLine(line, width));
   }
+
+  /** Nothing is cached between renders, so there is nothing to clear. */
+  invalidate(): void {}
 }
 
 const ELLIPSIS = "…";
@@ -71,6 +74,12 @@ export class StackComponent implements Component {
 
   render(width: number): string[] {
     return this.children.flatMap((child) => child.render(width));
+  }
+
+  invalidate(): void {
+    for (const child of this.children) {
+      child.invalidate?.();
+    }
   }
 }
 

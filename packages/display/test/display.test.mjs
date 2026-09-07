@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { piDisplay, primeDisplay } from "../dist/index.js";
-import { tuiSpecifier } from "../dist/shared.js";
+import { piDisplay, primeDisplay, updateOmpDiagramOverlay } from "../dist/index.js";
+import { StackComponent, TextComponent, tuiSpecifier } from "../dist/shared.js";
 import { truncateWithoutHost } from "../dist/truncate.js";
 
 const WIDE_LINES = [
@@ -192,4 +192,75 @@ test("a host without truncateToWidth gets fitted lines that keep their colors", 
       'if (cut !== "diagra…") throw new Error("conservative cut was not used: " + JSON.stringify(cut));',
     ],
   );
+});
+
+test("invalidate is safe on every component the host can wrap", async () => {
+  await primeDisplay();
+  const view = {
+    requested: "unicode",
+    display: { format: "unicode", content: WIDE_LINES.join("\n") },
+    image: undefined,
+    title: "resume me",
+    notes: ["note"],
+    details: () => ["detail"],
+  };
+  const call = { subject: "diagram", profile: "test", saveDirectory: undefined };
+  for (const expanded of [false, true]) {
+    const options = { expanded, isPartial: false };
+    const context = piDisplay.resolveContext(view, options, undefined);
+    const components = [
+      piDisplay.renderCall(call, colored),
+      piDisplay.renderResult(view, options, colored, context),
+    ];
+    for (const width of [1, 8, 34, 80]) {
+      for (const component of components) {
+        component.render(width);
+        assert.doesNotThrow(() => component.invalidate(), `expanded ${expanded}, width ${width}`);
+        component.render(width);
+      }
+    }
+  }
+});
+
+test("invalidate propagates through nested stacks and skips render-only children", () => {
+  let cleared = 0;
+  const root = new StackComponent();
+  const nested = new StackComponent();
+  nested.addChild(new TextComponent("leaf"));
+  nested.addChild({ render: () => ["host image without invalidate"] });
+  nested.addChild({
+    render: () => ["tracked"],
+    invalidate: () => {
+      cleared += 1;
+    },
+  });
+  root.addChild(nested);
+  root.addChild(new TextComponent("top"));
+  root.render(80);
+  assert.doesNotThrow(() => root.invalidate());
+  assert.equal(cleared, 1);
+  root.render(8);
+});
+
+test("the OMP overlay invalidates the content it wraps", () => {
+  let overlay;
+  const ui = {
+    expanded: true,
+    getToolsExpanded() {
+      return this.expanded;
+    },
+    setToolsExpanded(value) {
+      this.expanded = value;
+    },
+    custom(factory) {
+      overlay = factory({ terminal: { rows: 40 } }, colored, { matches: () => false }, () => {});
+      return Promise.resolve(undefined);
+    },
+  };
+  const context = { ui, setInterval: () => {} };
+  const image = { path: "/not-a-session-artifact.png", widthPx: 4, heightPx: 4 };
+  updateOmpDiagramOverlay(context, { image, title: "preview" }, true);
+  assert.ok(overlay !== undefined, "the overlay should have been created");
+  overlay.render(80);
+  assert.doesNotThrow(() => overlay.invalidate());
 });

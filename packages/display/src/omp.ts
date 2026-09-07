@@ -160,6 +160,10 @@ class OmpPngOverlay implements Component {
     return this.content.render(width);
   }
 
+  invalidate(): void {
+    this.content.invalidate?.();
+  }
+
   handleInput(data: string): void {
     if (
       !this.closed &&

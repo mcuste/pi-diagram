@@ -2,6 +2,12 @@ import type { StoredPng } from "@mcuste/pi-diagram-core";
 
 export interface Component {
   render(width: number): string[];
+  /**
+   * Clear cached rendering state. The host TUI calls this on theme changes,
+   * focus, resize, and session resume; Pi's MouseRegion invokes it directly
+   * (not defensively), so every component handed to the host must provide it.
+   */
+  invalidate?(): void;
 }
 
 export interface DisplayTheme {
