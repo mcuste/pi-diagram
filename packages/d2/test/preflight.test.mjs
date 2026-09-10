@@ -73,6 +73,28 @@ test("every shape the tool supports is accepted", () => {
   }
 });
 
+test("shape names are accepted in any case, as D2 reads them", () => {
+  for (const shape of ["Rectangle", "RECTANGLE", "Sql_Table", "C4-Person"]) {
+    assert.deepEqual(codes(`n: {\n  shape: ${shape}\n}`), [], shape);
+  }
+});
+
+test("a shape only the TALA layout engine draws is refused", () => {
+  assert.deepEqual(codes("p: {\n  shape: hierarchy\n}"), ["D2_UNKNOWN_SHAPE"]);
+});
+
+test("the image shape is refused in any case", () => {
+  for (const shape of ["Image", "IMAGE"]) {
+    assert.deepEqual(codes(`p: {\n  shape: ${shape}\n}`), ["D2_IMAGE_SHAPE"], shape);
+  }
+});
+
+test("an unknown shape is reported as the author wrote it", () => {
+  const [diagnostic] = diagnose("p: {\n  shape: Teapot\n}");
+  assert.equal(diagnostic.code, "D2_UNKNOWN_SHAPE");
+  assert.match(diagnostic.message, /"Teapot"/u);
+});
+
 test("block strings are refused, including the code and LaTeX forms", () => {
   assert.deepEqual(codes("a: |md\n  # heading\n|\na -> b"), ["D2_BLOCK_STRING"]);
   assert.deepEqual(codes("a: |`ts\n  const x = 1\n`|"), ["D2_BLOCK_STRING"]);

@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Shape names written with capital letters, such as `shape: Rectangle`, are no longer refused.
+
 ## [0.6.2] - 2026-09-07
 
 ### Fixed
