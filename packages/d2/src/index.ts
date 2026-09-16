@@ -5,12 +5,7 @@ export { inspect } from "./preflight.js";
 export type { LayoutPolicy, ProfileName, RenderProfile } from "./profiles.js";
 export { DEFAULT_PROFILE, PROFILE_NAMES, parseProfile } from "./profiles.js";
 export type { RasterRequest, SvgRasterizer } from "./raster.js";
-export {
-  parseCachedImage,
-  parseTargetDimensions,
-  parseTargetWidth,
-  ResvgRasterizer,
-} from "./raster.js";
+export { parseCachedImage, parseTargetDimensions, ResvgRasterizer } from "./raster.js";
 export type { DiagramRendering, Representation } from "./render.js";
 export { parseRepresentation, RENDER_MODES, renderDiagram } from "./render.js";
 export type {

@@ -60,6 +60,14 @@ export interface RenderProfile {
   readonly layout: LayoutPolicy;
 }
 
+/** Room between the ranks, so the edges crossing between containers stay separable. */
+const ARCHITECTURE_LAYOUT: LayoutPolicy = {
+  engine: "elk",
+  layerGapPx: 90,
+  edgeGapPx: 50,
+  containerPadPx: 60,
+};
+
 const PROFILES: Readonly<Record<ProfileName, RenderProfile>> = {
   /**
    * The default. Drawn by hand because an answer in a conversation is a rough model, and a crisp
@@ -73,14 +81,13 @@ const PROFILES: Readonly<Record<ProfileName, RenderProfile>> = {
     sketch: true,
     layout: { engine: "elk", layerGapPx: 60, edgeGapPx: 40, containerPadPx: 40 },
   },
-  // Room between the ranks, so the edges crossing between containers stay separable.
   architecture: {
     name: "architecture",
     theme: NEUTRAL_THEME,
     darkTheme: DARK_THEME,
     padPx: 60,
     sketch: false,
-    layout: { engine: "elk", layerGapPx: 90, edgeGapPx: 50, containerPadPx: 60 },
+    layout: ARCHITECTURE_LAYOUT,
   },
   // Tables and classes are tall already, so the space around them is kept tight.
   data: {
@@ -112,14 +119,14 @@ const PROFILES: Readonly<Record<ProfileName, RenderProfile>> = {
     sketch: false,
     layout: { engine: "dagre", nodeGapPx: 40, edgeGapPx: 20 },
   },
-  // Architecture spacing. The palette is the whole difference.
+  // The palette is the whole difference from architecture.
   c4: {
     name: "c4",
     theme: C4_THEME,
     darkTheme: DARK_THEME,
     padPx: 60,
     sketch: false,
-    layout: { engine: "elk", layerGapPx: 90, edgeGapPx: 50, containerPadPx: 60 },
+    layout: ARCHITECTURE_LAYOUT,
   },
   /**
    * For a graph with more nodes than usual. Edges routed past nodes fill most of a large graph, so

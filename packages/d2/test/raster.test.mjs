@@ -4,12 +4,9 @@ import { ImageRenderUnavailableError, parseRenderedPng } from "@mcuste/pi-diagra
 import { face } from "../../../test/fixtures/font.mjs";
 import { png } from "../../../test/fixtures/png.mjs";
 import { missingCodePoints, parseEmbeddedFonts, textCodePoints } from "../dist/fonts.js";
-import {
-  parseCachedImage,
-  parseTargetDimensions,
-  parseTargetWidth,
-  ResvgRasterizer,
-} from "../dist/raster.js";
+import { parseCachedImage, parseTargetDimensions, ResvgRasterizer } from "../dist/raster.js";
+
+const widthFor = (width, height) => parseTargetDimensions(width, height).widthPx;
 
 /** An entry as the store holds one: the sizes it was drawn at, then the bytes. */
 function entryFor(bytes, { width = 800, height = 600, fonts = 0 } = {}) {
@@ -86,12 +83,12 @@ test("a PNG with a corrupt chunk checksum is refused", () => {
 });
 
 test("the draw width is twice the diagram, inside fixed bounds", () => {
-  assert.equal(parseTargetWidth(400, 300), 800);
+  assert.equal(widthFor(400, 300), 800);
   // Wide diagrams stop at the width limit, tall ones at the height limit.
-  assert.equal(parseTargetWidth(2000, 100), 1600);
-  assert.equal(parseTargetWidth(400, 4800), 200);
+  assert.equal(widthFor(2000, 100), 1600);
+  assert.equal(widthFor(400, 4800), 200);
   // A tiny diagram is still drawn big enough to read.
-  assert.equal(parseTargetWidth(100, 80), 480);
+  assert.equal(widthFor(100, 80), 480);
   assert.throws(() => parseTargetDimensions(1, 1_000_000_000), ImageRenderUnavailableError);
 });
 
@@ -102,7 +99,7 @@ test("a canvas with no area is refused rather than drawn", () => {
     [Number.NaN, 100],
     [Number.POSITIVE_INFINITY, 100],
   ]) {
-    assert.throws(() => parseTargetWidth(width, height), ImageRenderUnavailableError);
+    assert.throws(() => widthFor(width, height), ImageRenderUnavailableError);
   }
 });
 

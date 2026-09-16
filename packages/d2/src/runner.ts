@@ -111,25 +111,28 @@ class D2UnavailableError extends Error {
   }
 }
 
-/** D2 accepted the source but drew nothing usable. Not the model's mistake to correct. */
-export class TextRenderUnavailableError extends Error {
+/** D2 accepted the source, so none of these is a mistake the model can correct. */
+abstract class RenderUnavailableError extends Error {
   readonly diagnostics: readonly Diagnostic[];
 
-  constructor(message: string, diagnostics: readonly Diagnostic[] = []) {
+  constructor(message: string, diagnostics: readonly Diagnostic[]) {
     super(message);
-    this.name = "TextRenderUnavailableError";
     this.diagnostics = diagnostics;
   }
 }
 
-/** The text representation remains usable when an optional SVG cannot be produced. */
-export class SvgRenderUnavailableError extends Error {
-  readonly diagnostics: readonly Diagnostic[];
-
+export class TextRenderUnavailableError extends RenderUnavailableError {
   constructor(message: string, diagnostics: readonly Diagnostic[] = []) {
-    super(message);
+    super(message, diagnostics);
+    this.name = "TextRenderUnavailableError";
+  }
+}
+
+/** The text representation remains usable when an optional SVG cannot be produced. */
+export class SvgRenderUnavailableError extends RenderUnavailableError {
+  constructor(message: string, diagnostics: readonly Diagnostic[] = []) {
+    super(message, diagnostics);
     this.name = "SvgRenderUnavailableError";
-    this.diagnostics = diagnostics;
   }
 }
 
@@ -209,15 +212,11 @@ function spacingArguments(layout: LayoutPolicy): readonly string[] {
 export function parseD2Version(result: CommandResult): SupportedD2Version {
   const raw = (result.stdout.trim() || result.stderr.trim()).split("\n")[0]?.trim() ?? "";
   const match = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z][0-9A-Za-z.+-]*)?$/u.exec(raw);
-  if (findTerminalControl(raw) !== undefined || !match || result.exitCode !== 0) {
+  const found = match === null ? undefined : triple(match[1], match[2], match[3]);
+  if (findTerminalControl(raw) !== undefined || found === undefined || result.exitCode !== 0) {
     throw new D2UnavailableError(
       `Could not read a version from D2 (${raw ? JSON.stringify(raw) : "no output"}).`,
     );
-  }
-
-  const found = triple(match[1], match[2], match[3]);
-  if (found === undefined) {
-    throw new D2UnavailableError(`Could not read a version from D2 (${JSON.stringify(raw)}).`);
   }
   if (isBelow(found, MINIMUM_VERSION)) {
     throw new D2UnavailableError(`D2 ${raw} is installed, which is too old.`);
@@ -316,6 +315,13 @@ export function parseRenderedSvg(raw: string): RenderedSvg {
   }
 }
 
+/** The returned path is the file `d2 fmt` rewrites in place. */
+async function stageSource(directory: string, source: D2Source): Promise<string> {
+  const path = join(directory, INPUT_FILE);
+  await writeFile(path, `${source}\n`, "utf8");
+  return path;
+}
+
 /** Bounds what one session remembers about sources D2 already accepted. */
 const MAX_VALIDATED = 256;
 
@@ -362,8 +368,7 @@ export class D2Cli implements D2Renderer {
     }
 
     return withTempDirectory(RENDER_PREFIX, async (directory) => {
-      const path = join(directory, INPUT_FILE);
-      await writeFile(path, `${request.source}\n`, "utf8");
+      const path = await stageSource(directory, request.source);
       const result = await this.run(FORMAT_ARGUMENTS, directory, request.signal);
       if (result.exitCode !== 0) {
         throw new SourceFormatUnavailableError("D2 could not format this source.", {
@@ -415,7 +420,7 @@ export class D2Cli implements D2Renderer {
     }
 
     return withTempDirectory(RENDER_PREFIX, async (directory) => {
-      await writeFile(join(directory, INPUT_FILE), `${source}\n`, "utf8");
+      await stageSource(directory, source);
       if (!this.validated.has(compiles)) {
         await this.validate(directory, signal);
       }

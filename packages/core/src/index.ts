@@ -48,9 +48,10 @@ export {
 export { parseSafeSvg, SvgOutputError } from "./svg.js";
 export type { TerminalControl } from "./terminal.js";
 export {
+  blankTerminalControls,
   describeCodePoint,
   findTerminalControl,
   removeTerminalControls,
   safeErrorMessage,
 } from "./terminal.js";
-export { describeInvalidValue, isRecord } from "./values.js";
+export { describeInvalidValue, isRecord, ownValue } from "./values.js";

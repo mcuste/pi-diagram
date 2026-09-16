@@ -4,6 +4,7 @@ import {
   formatDiagnostic,
   isRecord,
   MAX_DIRECTORY_LENGTH,
+  ownValue,
   parseArtifactNames,
   removeTerminalControls,
   type StoredPng,
@@ -253,11 +254,10 @@ function approvalDetails(args: unknown): readonly string[] | undefined {
   if (save === undefined) {
     return ["Writes diagram artifacts into the repository"];
   }
-  const read = (key: string): unknown => (isRecord(args) ? Reflect.get(args, key) : undefined);
   try {
-    const title = read("title");
+    const title = ownValue(args, "title");
     const names = parseArtifactNames(
-      { formats: read("formats"), save },
+      { formats: ownValue(args, "formats"), save },
       { title: typeof title === "string" ? title : undefined, hash: "" },
     );
     return workspacePaths(names).map((path) => `Writes ${path}`);
@@ -269,15 +269,16 @@ function approvalDetails(args: unknown): readonly string[] | undefined {
 }
 
 function readSave(args: unknown): Record<string, unknown> | undefined {
-  if (!isRecord(args)) {
-    return undefined;
-  }
-  const save = Reflect.get(args, "save");
+  const save = isRecord(args) ? ownValue(args, "save") : undefined;
   return isRecord(save) ? save : undefined;
 }
 
-function hasSave(args: unknown): boolean {
+function hasSave(args: unknown): args is Record<string, unknown> {
   return isRecord(args) && Object.hasOwn(args, "save");
+}
+
+function isTheme(value: unknown): value is DisplayTheme {
+  return isRecord(value) && typeof value.fg === "function";
 }
 
 /** The waiting row names the diagram and the policy, never the source. */
@@ -426,13 +427,7 @@ export function registerDiagramTools(
     concurrency: "shared",
     executionMode: "parallel",
     renderCall(args, themeOrOptions, ompTheme) {
-      const theme =
-        ompTheme ??
-        (typeof themeOrOptions === "object" &&
-        themeOrOptions !== null &&
-        typeof Reflect.get(themeOrOptions, "fg") === "function"
-          ? (themeOrOptions as DisplayTheme)
-          : undefined);
+      const theme = ompTheme ?? (isTheme(themeOrOptions) ? themeOrOptions : undefined);
       if (theme === undefined) {
         throw new Error("The host did not provide a display theme.");
       }

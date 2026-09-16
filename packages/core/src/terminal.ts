@@ -3,30 +3,34 @@ export interface TerminalControl {
   readonly codePoint: number;
 }
 
+const CONTROLS = /\p{Cc}/gu;
+
 /** Control characters can change terminal state instead of showing text. */
 export function findTerminalControl(
   text: string,
   allowLineFeed = false,
   allowTab = false,
 ): TerminalControl | undefined {
-  let offset = 0;
-  for (const character of text) {
-    const codePoint = character.codePointAt(0) ?? 0;
-    const allowed = (allowLineFeed && codePoint === 0x0a) || (allowTab && codePoint === 0x09);
-    if (/\p{Cc}/u.test(character) && !allowed) {
-      return { offset, codePoint };
+  for (const match of text.matchAll(CONTROLS)) {
+    const character = match[0];
+    if ((allowLineFeed && character === "\n") || (allowTab && character === "\t")) {
+      continue;
     }
-    offset += character.length;
+    return { offset: match.index, codePoint: character.codePointAt(0) ?? 0 };
   }
   return undefined;
 }
 
 /** Removes controls from diagnostics and other text emitted by external programs. */
 export function removeTerminalControls(text: string, allowLineFeed = false): string {
-  return Array.from(text, (character) => {
-    const codePoint = character.codePointAt(0) ?? 0;
-    return /\p{Cc}/u.test(character) && (!allowLineFeed || codePoint !== 0x0a) ? "" : character;
-  }).join("");
+  return text.replace(CONTROLS, (character) =>
+    allowLineFeed && character === "\n" ? character : "",
+  );
+}
+
+/** A space keeps words apart where a control character separated them. */
+export function blankTerminalControls(text: string): string {
+  return text.replace(CONTROLS, " ");
 }
 
 /** Returns a terminal-safe Error message, or `unknown error`. */

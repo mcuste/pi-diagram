@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /** Removes a path and ignores every failure, where a leftover file must not fail the call. */
-export async function removeQuietly(path: string): Promise<void> {
-  await rm(path, { force: true }).catch(() => undefined);
+export async function removeQuietly(path: string, recursive = false): Promise<void> {
+  await rm(path, { force: true, recursive }).catch(() => undefined);
 }
 
 /**
@@ -19,6 +19,6 @@ export async function withTempDirectory<TResult>(
   try {
     return await use(directory);
   } finally {
-    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    await removeQuietly(directory, true);
   }
 }

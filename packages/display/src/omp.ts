@@ -1,4 +1,3 @@
-import { basename } from "node:path";
 import { isRecord } from "@mcuste/pi-diagram-core";
 import type {
   Component,
@@ -8,15 +7,14 @@ import type {
   DisplayTheme,
 } from "./contracts.js";
 import {
-  appendWarning,
+  chooseImage,
   createImage,
   createPreviewImage,
   fallbackState,
-  hyperlink,
   IMAGE_UNAVAILABLE_WARNING,
-  imagesSupported,
   imageUrl,
   PREVIEW_MAX_HEIGHT_CELLS,
+  pngLink,
   ResultComponent,
   renderCall,
   StackComponent,
@@ -90,9 +88,10 @@ export function updateOmpDiagramOverlay(
   const { ui } = rawContext;
   let state = toggleStates.get(ui);
   if (state === undefined) {
-    state = { view: undefined, overlayOpen: false };
-    toggleStates.set(ui, state);
-    rawContext.setInterval(() => syncDiagramOverlay(ui, state as ToggleState), 75);
+    const created: ToggleState = { view: undefined, overlayOpen: false };
+    toggleStates.set(ui, created);
+    rawContext.setInterval(() => syncDiagramOverlay(ui, created), 75);
+    state = created;
   }
   state.view = enabled ? view : undefined;
   syncDiagramOverlay(ui, state);
@@ -114,9 +113,11 @@ function isOmpToolContext(value: unknown): value is OmpToolContext {
 
 function syncDiagramOverlay(ui: OmpUi, state: ToggleState): void {
   const view = state.view;
-  if (state.overlayOpen || view?.image === undefined || !ui.getToolsExpanded()) {
+  const image = view?.image;
+  if (view === undefined || image === undefined || state.overlayOpen || !ui.getToolsExpanded()) {
     return;
   }
+  const { title } = view;
   state.overlayOpen = true;
   const imageState: Record<string, unknown> = {};
   const finish = (): void => {
@@ -126,15 +127,7 @@ function syncDiagramOverlay(ui: OmpUi, state: ToggleState): void {
   void ui
     .custom(
       (tui, theme, keybindings, done) =>
-        renderPngOverlay(
-          view.image as DisplayImage,
-          view.title,
-          imageState,
-          tui,
-          theme,
-          keybindings,
-          done,
-        ),
+        renderPngOverlay(image, title, imageState, tui, theme, keybindings, done),
       {
         overlay: true,
         overlayOptions: {
@@ -197,7 +190,6 @@ function renderPngOverlay(
   const picture = createImage(image, theme, state, {
     maxWidthCells: UNBOUNDED_WIDTH_CELLS,
     maxHeightCells,
-    filename: image.path,
     budget: tui.imageBudget,
     imageKey: `${WIDGET_KEY}:${image.path}`,
   });
@@ -226,15 +218,9 @@ function renderOmpResult(
   theme: DisplayTheme,
   context: OmpContext,
 ): ResultComponent {
-  const wantsImage = view.requested === "image";
-  const canShowImage = wantsImage && view.image !== undefined && imagesSupported() === true;
-  const picture =
-    canShowImage && view.image !== undefined
-      ? createPreviewImage(view.image, theme, context.state)
-      : undefined;
-  const warning =
-    wantsImage && view.image !== undefined && !canShowImage ? IMAGE_UNAVAILABLE_WARNING : undefined;
-  const notes = appendWarning(view.notes, warning);
+  const { picture, notes } = chooseImage(view, view.requested === "image", (image) =>
+    createPreviewImage(image, theme, context.state),
+  );
   const container = new ResultComponent(theme);
   const url = view.image === undefined ? undefined : imageUrl(view.image);
 
@@ -247,7 +233,7 @@ function renderOmpResult(
     container.addChild(picture);
   }
   if (url !== undefined && view.image !== undefined) {
-    container.muted(`Open PNG: ${hyperlink(basename(view.image.path), url)}`);
+    container.muted(`Open PNG: ${pngLink(view.image, url)}`);
   }
   if (view.requested === "auto" && view.image !== undefined) {
     container.muted("Ctrl+O: view latest PNG");

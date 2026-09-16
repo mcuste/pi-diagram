@@ -1,4 +1,3 @@
-import { basename } from "node:path";
 import { isRecord } from "@mcuste/pi-diagram-core";
 import type {
   Component,
@@ -9,14 +8,13 @@ import type {
   RenderOptions,
 } from "./contracts.js";
 import {
-  appendWarning,
+  chooseImage,
   createImage,
   createPreviewImage,
   fallbackState,
   hyperlink,
-  IMAGE_UNAVAILABLE_WARNING,
-  imagesSupported,
   imageUrl,
+  pngLink,
   ResultComponent,
   renderCall,
   UNBOUNDED_WIDTH_CELLS,
@@ -49,19 +47,12 @@ function renderPiResult(
   context: PiContext,
 ): ResultComponent {
   const wantsImage = view.requested === "image" || (view.requested === "auto" && options.expanded);
-  const canShowImage =
-    wantsImage && view.image !== undefined && context.showImages && imagesSupported() === true;
-  const picture =
-    canShowImage && view.image !== undefined
-      ? drawImage(view.image, theme, context.state, options.expanded)
-      : undefined;
-  const warning =
-    wantsImage && view.image !== undefined && !canShowImage
-      ? context.showImages
-        ? IMAGE_UNAVAILABLE_WARNING
-        : "Inline images are disabled in this view."
-      : undefined;
-  const notes = appendWarning(view.notes, warning);
+  const { picture, notes } = chooseImage(
+    view,
+    wantsImage,
+    (image) => drawImage(image, theme, context.state, options.expanded),
+    context.showImages ? undefined : "Inline images are disabled in this view.",
+  );
   const hint = piHint(view, options, picture !== undefined);
   const container = new ResultComponent(theme);
   const url = picture !== undefined && view.image !== undefined ? imageUrl(view.image) : undefined;
@@ -77,7 +68,7 @@ function renderPiResult(
   } else {
     container.addChild(picture);
     if (view.title === undefined && url !== undefined && view.image !== undefined) {
-      container.muted(hyperlink(basename(view.image.path), url));
+      container.muted(pngLink(view.image, url));
     }
     if (hint !== undefined) {
       container.muted(hint);
@@ -107,7 +98,6 @@ function drawImage(
     ? createImage(image, theme, state, {
         maxWidthCells: UNBOUNDED_WIDTH_CELLS,
         maxHeightCells: UNBOUNDED_WIDTH_CELLS,
-        filename: image.path,
       })
     : createPreviewImage(image, theme, state);
 }

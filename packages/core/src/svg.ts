@@ -25,6 +25,12 @@ const UNSAFE_CSS_IDENTIFIERS: ReadonlySet<string> = new Set([
 const LOCAL_REFERENCE = /^url\(\s*#[A-Za-z_][-A-Za-z0-9_.:]*\s*\)$/iu;
 const EMBEDDED_FONT = /^data:application\/font-woff;base64,[A-Za-z0-9+/=]+$/u;
 
+/** A piece of CSS, and the offset where reading it stopped. */
+interface CssToken {
+  readonly value: string;
+  readonly next: number;
+}
+
 export class SvgOutputError extends Error {
   constructor(message: string) {
     super(message);
@@ -214,10 +220,7 @@ function parseCssUrl(css: string, start: number): number {
   return index + 1;
 }
 
-function readCssIdentifier(
-  css: string,
-  start: number,
-): { readonly value: string; readonly next: number } | undefined {
+function readCssIdentifier(css: string, start: number): CssToken | undefined {
   let index = start;
   let value = "";
   while (index < css.length) {
@@ -237,10 +240,7 @@ function readCssIdentifier(
   return value.length === 0 ? undefined : { value: value.toLowerCase(), next: index };
 }
 
-function skipCssString(
-  css: string,
-  start: number,
-): { readonly value: string; readonly next: number } {
+function skipCssString(css: string, start: number): CssToken {
   const quote = css[start] as string;
   let index = start + 1;
   let value = "";
@@ -261,10 +261,7 @@ function skipCssString(
   throw new SvgOutputError("D2 SVG contains an unterminated CSS string.");
 }
 
-function readCssEscape(
-  css: string,
-  start: number,
-): { readonly value: string; readonly next: number } {
+function readCssEscape(css: string, start: number): CssToken {
   const hex = /^[0-9A-Fa-f]{1,6}/u.exec(css.slice(start))?.[0];
   if (hex === undefined) {
     const value = css[start];

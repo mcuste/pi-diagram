@@ -93,10 +93,6 @@ export function parseTargetDimensions(
   return { widthPx, heightPx };
 }
 
-export function parseTargetWidth(naturalWidthPx: number, naturalHeightPx: number): number {
-  return parseTargetDimensions(naturalWidthPx, naturalHeightPx).widthPx;
-}
-
 /** The store holds text, so an image travels as base64 behind the sizes it was drawn at. */
 function formatCachedImage(image: RasterImage): string {
   const drawn = `${image.widthPx} ${image.heightPx} ${image.systemFonts ? 1 : 0}`;

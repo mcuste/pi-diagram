@@ -27,3 +27,8 @@ export function describeInvalidValue(value: unknown): string {
   }
   return "object";
 }
+
+/** Keeps an inherited property from becoming an argument. */
+export function ownValue(record: Record<string, unknown>, key: string): unknown {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
+}

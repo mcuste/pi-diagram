@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  blankTerminalControls,
   DiagramSourceError,
   describeCodePoint,
   describeInvalidValue,
@@ -52,7 +53,7 @@ export function parseD2Source(raw: unknown): ParsedD2Source {
 
 function normalizeSource(raw: unknown): string {
   if (typeof raw !== "string") {
-    refuse("Diagram source must be a string.", `Received ${raw === null ? "null" : typeof raw}.`);
+    refuse("Diagram source must be a string.", `Received ${describeInvalidValue(raw)}.`);
   }
 
   const text = stripByteOrderMark(raw).replace(/\r\n?/gu, "\n").trim();
@@ -94,10 +95,7 @@ export function parseTitle(raw: unknown): SafeTitle | undefined {
       `${raw.length} characters is above the ${MAX_TITLE_LENGTH} character limit.`,
     );
   }
-  const printable = Array.from(raw, (character) =>
-    findTerminalControl(character) === undefined ? character : " ",
-  ).join("");
-  const title = printable.replace(/\s+/gu, " ").trim();
+  const title = blankTerminalControls(raw).replace(/\s+/gu, " ").trim();
   if (title.length === 0) {
     refuse("Diagram title is empty.", "Give the diagram a non-empty title.");
   }

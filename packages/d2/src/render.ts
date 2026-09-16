@@ -1,13 +1,13 @@
 import type { SourceHash } from "@mcuste/pi-diagram-core";
 import {
   type ArtifactFormat,
-  type ArtifactNames,
   type ArtifactTarget,
   type Diagnostic,
   DiagramSourceError,
   describeInvalidValue,
   ImageRenderUnavailableError,
   isRecord,
+  ownValue,
   parseArtifactNames,
   parseArtifactTarget,
   type RasterImage,
@@ -52,7 +52,7 @@ interface ParsedDiagramRequest {
   readonly title: SafeTitle | undefined;
   readonly profile: RenderProfile;
   readonly representation: Representation;
-  readonly names: ArtifactNames | undefined;
+  /** Undefined when the call asked for no files. */
   readonly target: ArtifactTarget | undefined;
   readonly signal: AbortSignal | undefined;
 }
@@ -126,8 +126,7 @@ async function parseDiagramRequest(request: unknown): Promise<ParsedDiagramReque
       `${describeInvalidValue(unexpected)} is not supported.`,
     );
   }
-  const read = (key: string): unknown =>
-    Object.hasOwn(request, key) ? Reflect.get(request, key) : undefined;
+  const read = (key: string): unknown => ownValue(request, key);
 
   const parsedSource = parseD2Source(read("source"));
   const title = parseTitle(read("title"));
@@ -139,14 +138,12 @@ async function parseDiagramRequest(request: unknown): Promise<ParsedDiagramReque
     save !== undefined || formats !== undefined
       ? parseArtifactNames({ formats, save }, { title, hash: parsedSource.hash })
       : undefined;
-  const target = names === undefined ? undefined : await parseArtifactTarget(read("cwd"), names);
   return {
     parsedSource,
     title,
     profile,
     representation,
-    names,
-    target,
+    target: names === undefined ? undefined : await parseArtifactTarget(read("cwd"), names),
     signal: parseSignal(read("signal")),
   };
 }
@@ -156,19 +153,17 @@ export async function renderDiagram(
   renderer: D2Renderer,
   rasterizer: SvgRasterizer = new ResvgRasterizer(),
 ): Promise<DiagramRendering> {
-  const { names, parsedSource, profile, representation, signal, target, title } =
+  const { parsedSource, profile, representation, signal, target, title } =
     await parseDiagramRequest(request);
   const { source } = parsedSource;
   throwIfCancelled(signal, "Drawing the diagram");
 
   const notes: string[] = [];
-  const savesSvg = names?.formats.includes("svg") === true;
-  const savesPng = names?.formats.includes("png") === true;
-  const drawn = await tryRender(renderer, source, signal);
-  const textFailure = drawn instanceof TextRenderUnavailableError ? drawn : undefined;
-  const text = drawn instanceof TextRenderUnavailableError ? undefined : drawn.text;
-  /** Undefined when the text renderer failed, so the SVG run reports the version instead. */
-  const textVersion = drawn instanceof TextRenderUnavailableError ? undefined : drawn.version;
+  const formats = target?.names.formats ?? [];
+  const savesSvg = formats.includes("svg");
+  const savesPng = formats.includes("png");
+  const { drawn, failure: textFailure } = await tryRender(renderer, source, signal);
+  const text = drawn?.text;
 
   let svg: D2Svg | undefined;
   try {
@@ -184,21 +179,21 @@ export async function renderDiagram(
     svg === undefined ? undefined : await tryRasterize(rasterizer, svg.svg, signal, notes);
 
   const contents = new Map<ArtifactFormat, string | Uint8Array>();
-  if (target !== undefined && names !== undefined) {
-    if (names.formats.includes("source")) {
+  if (target !== undefined) {
+    if (formats.includes("source")) {
       contents.set("source", await sourceToSave(renderer, source, signal));
     }
-    if (names.formats.includes("svg") && svg !== undefined) {
+    if (savesSvg && svg !== undefined) {
       contents.set("svg", `${svg.svg}\n`);
     }
-    if (names.formats.includes("png")) {
+    if (savesPng) {
       if (raster === undefined) {
         notes.push("No .png was written, because the PNG could not be generated.");
       } else {
         contents.set("png", raster.png);
       }
     }
-    if (names.formats.includes("txt")) {
+    if (formats.includes("txt")) {
       if (text === undefined) {
         notes.push("No .txt was written, because D2 could not draw this diagram as text.");
       } else {
@@ -239,7 +234,7 @@ export async function renderDiagram(
     source,
     diagnostics: textFailed ? textFailure.diagnostics : [],
     image,
-    d2Version: textVersion ?? svg?.version,
+    d2Version: drawn?.version ?? svg?.version,
     notes,
     saved,
   };
@@ -323,17 +318,23 @@ async function keepImage(
   }
 }
 
+interface TextAttempt {
+  readonly drawn: D2Text | undefined;
+  readonly failure: TextRenderUnavailableError | undefined;
+}
+
 /** Preserves usable images and artifacts when text rendering fails. */
 async function tryRender(
   renderer: D2Renderer,
   source: D2Source,
   signal: AbortSignal | undefined,
-): Promise<D2Text | TextRenderUnavailableError> {
+): Promise<TextAttempt> {
   try {
-    return await renderer.renderText({ source, asciiMode: "extended", signal });
+    const drawn = await renderer.renderText({ source, asciiMode: "extended", signal });
+    return { drawn, failure: undefined };
   } catch (error) {
     if (error instanceof TextRenderUnavailableError) {
-      return error;
+      return { drawn: undefined, failure: error };
     }
     throw error;
   }

@@ -18,7 +18,7 @@ import { refuse } from "./diagnostics.js";
 import { removeQuietly } from "./fs.js";
 import { throwIfCancelled } from "./process.js";
 import { describeCodePoint, findTerminalControl, safeErrorMessage } from "./terminal.js";
-import { describeInvalidValue, isRecord } from "./values.js";
+import { describeInvalidValue, isRecord, ownValue } from "./values.js";
 
 /**
  * Writes diagram artifacts. Files land in a private temporary directory unless a call names a
@@ -112,7 +112,7 @@ function parseFormats(requested: unknown): readonly ArtifactFormat[] {
   if (!Array.isArray(requested) || requested.length === 0) {
     refuse(
       "Diagram save formats are not usable.",
-      `Expected a non-empty list, got ${typeof requested}.`,
+      `Expected a non-empty list, got ${describeInvalidValue(requested)}.`,
     );
   }
 
@@ -197,8 +197,8 @@ function parseSave(requested: unknown): { readonly directory: string; readonly b
     refuse("Saving a diagram needs a directory.", "`save.dir` was not given.");
   }
   return {
-    directory: parseDirectory(Reflect.get(requested, "dir")),
-    basename: Object.hasOwn(requested, "basename") ? Reflect.get(requested, "basename") : undefined,
+    directory: parseDirectory(ownValue(requested, "dir")),
+    basename: ownValue(requested, "basename"),
   };
 }
 

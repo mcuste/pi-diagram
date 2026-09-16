@@ -1,8 +1,15 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
+import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isRecord, isSessionArtifactPath, parseRenderedPng } from "@mcuste/pi-diagram-core";
-import type { Component, DiagramCallView, DisplayImage, DisplayTheme } from "./contracts.js";
+import type {
+  Component,
+  DiagramCallView,
+  DiagramResultView,
+  DisplayImage,
+  DisplayTheme,
+} from "./contracts.js";
 import { ELLIPSIS, truncateWithoutHost } from "./truncate.js";
 
 const PREVIEW_MAX_WIDTH_CELLS = 60;
@@ -29,6 +36,9 @@ interface ImageOptions {
   readonly budget?: unknown;
   readonly imageKey?: string;
 }
+
+/** The file name always comes from the image path. */
+type ImageRequest = Omit<ImageOptions, "filename">;
 
 interface TuiModule {
   readonly getCapabilities?: () => unknown;
@@ -104,11 +114,37 @@ export class ResultComponent extends StackComponent {
 }
 
 /** Reports a limitation the renderer found, unless the render already reported it. */
-export function appendWarning(
-  notes: readonly string[],
-  warning: string | undefined,
-): readonly string[] {
-  return warning === undefined || notes.includes(warning) ? notes : [...notes, warning];
+function appendWarning(notes: readonly string[], warning: string): readonly string[] {
+  return notes.includes(warning) ? notes : [...notes, warning];
+}
+
+export interface ImageChoice {
+  readonly picture: Component | undefined;
+  /** The render's own notes, plus the reason there is no image. */
+  readonly notes: readonly string[];
+}
+
+/**
+ * Draws the image when the request, the host, and the terminal all allow it. `disabled` is the
+ * message for a host that turns inline images off.
+ */
+export function chooseImage(
+  view: DiagramResultView,
+  wanted: boolean,
+  draw: (image: DisplayImage) => Component | undefined,
+  disabled?: string,
+): ImageChoice {
+  const image = view.image;
+  if (!wanted || image === undefined) {
+    return { picture: undefined, notes: view.notes };
+  }
+  if (disabled !== undefined) {
+    return { picture: undefined, notes: appendWarning(view.notes, disabled) };
+  }
+  if (imagesSupported() !== true) {
+    return { picture: undefined, notes: appendWarning(view.notes, IMAGE_UNAVAILABLE_WARNING) };
+  }
+  return { picture: draw(image), notes: view.notes };
 }
 
 /** Per-result state for a host that keeps none of its own. */
@@ -177,7 +213,7 @@ async function loadTui(specifier: string | undefined): Promise<unknown> {
 }
 
 export function displayLoaded(): boolean {
-  return true;
+  return tui !== undefined;
 }
 
 export function imagesSupported(): boolean | undefined {
@@ -199,7 +235,6 @@ export function createPreviewImage(
   return createImage(image, theme, state, {
     maxWidthCells: PREVIEW_MAX_WIDTH_CELLS,
     maxHeightCells: PREVIEW_MAX_HEIGHT_CELLS,
-    filename: image.path,
   });
 }
 
@@ -207,7 +242,7 @@ export function createImage(
   image: DisplayImage,
   theme: DisplayTheme,
   state: Record<string, unknown>,
-  options: ImageOptions,
+  options: ImageRequest,
 ): Component | undefined {
   const module = tui;
   const supported = currentCapabilities();
@@ -224,7 +259,7 @@ export function createImage(
       readImage(image, state),
       "image/png",
       { fallbackColor: (text: string) => theme.fg("toolOutput", text) },
-      options,
+      { ...options, filename: image.path },
       { widthPx: image.widthPx, heightPx: image.heightPx },
     );
   } catch {
@@ -240,6 +275,11 @@ export function imageUrl(image: DisplayImage): string | undefined {
 
 export function hyperlink(text: string, url: string): string {
   return tui?.hyperlink?.(text, url) ?? `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
+}
+
+/** The link text is the file name alone. */
+export function pngLink(image: DisplayImage, url: string): string {
+  return hyperlink(basename(image.path), url);
 }
 
 export function renderCall(view: DiagramCallView, theme: DisplayTheme): Component {
