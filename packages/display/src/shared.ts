@@ -1,13 +1,16 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { isSessionArtifactPath, parseRenderedPng } from "@mcuste/pi-diagram-core";
+import { isRecord, isSessionArtifactPath, parseRenderedPng } from "@mcuste/pi-diagram-core";
 import type { Component, DiagramCallView, DisplayImage, DisplayTheme } from "./contracts.js";
-import { truncateWithoutHost } from "./truncate.js";
+import { ELLIPSIS, truncateWithoutHost } from "./truncate.js";
 
-export const PREVIEW_MAX_WIDTH_CELLS = 60;
+const PREVIEW_MAX_WIDTH_CELLS = 60;
 export const PREVIEW_MAX_HEIGHT_CELLS = 18;
 export const UNBOUNDED_WIDTH_CELLS = Number.MAX_SAFE_INTEGER;
+
+/** Both renderers report the same limitation, and only once per result. */
+export const IMAGE_UNAVAILABLE_WARNING = "This terminal cannot display inline images.";
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const TUI_PACKAGES = ["@earendil-works/pi-tui", "@oh-my-pi/pi-tui"] as const;
@@ -52,8 +55,6 @@ export class TextComponent implements Component {
   invalidate(): void {}
 }
 
-const ELLIPSIS = "…";
-
 /** Pi stops when a rendered line is wider than the terminal. */
 function truncateLine(text: string, width: number): string {
   if (width <= 0) {
@@ -82,6 +83,44 @@ export class StackComponent implements Component {
       child.invalidate?.();
     }
   }
+}
+
+/** A stack that writes its text in the two colors a result row uses. */
+export class ResultComponent extends StackComponent {
+  private readonly theme: DisplayTheme;
+
+  constructor(theme: DisplayTheme) {
+    super();
+    this.theme = theme;
+  }
+
+  line(text: string): void {
+    this.addChild(new TextComponent(this.theme.fg("toolOutput", text)));
+  }
+
+  muted(text: string): void {
+    this.addChild(new TextComponent(this.theme.fg("muted", text)));
+  }
+}
+
+/** Reports a limitation the renderer found, unless the render already reported it. */
+export function appendWarning(
+  notes: readonly string[],
+  warning: string | undefined,
+): readonly string[] {
+  return warning === undefined || notes.includes(warning) ? notes : [...notes, warning];
+}
+
+/** Per-result state for a host that keeps none of its own. */
+const fallbackStates = new WeakMap<object, Record<string, unknown>>();
+
+export function fallbackState(key: object): Record<string, unknown> {
+  let state = fallbackStates.get(key);
+  if (state === undefined) {
+    state = {};
+    fallbackStates.set(key, state);
+  }
+  return state;
 }
 
 let tui: TuiModule | undefined;
@@ -142,8 +181,26 @@ export function displayLoaded(): boolean {
 }
 
 export function imagesSupported(): boolean | undefined {
-  const supported = tui === undefined ? undefined : capabilities(tui);
+  const supported = currentCapabilities();
   return supported === undefined ? undefined : supported.images !== null;
+}
+
+/** What the loaded host TUI reports about this terminal, if one loaded at all. */
+function currentCapabilities(): ImageCapabilities | undefined {
+  return tui === undefined ? undefined : readCapabilities(tui);
+}
+
+/** The compact image both renderers show beside a result. */
+export function createPreviewImage(
+  image: DisplayImage,
+  theme: DisplayTheme,
+  state: Record<string, unknown>,
+): Component | undefined {
+  return createImage(image, theme, state, {
+    maxWidthCells: PREVIEW_MAX_WIDTH_CELLS,
+    maxHeightCells: PREVIEW_MAX_HEIGHT_CELLS,
+    filename: image.path,
+  });
 }
 
 export function createImage(
@@ -153,7 +210,7 @@ export function createImage(
   options: ImageOptions,
 ): Component | undefined {
   const module = tui;
-  const supported = module === undefined ? undefined : capabilities(module);
+  const supported = currentCapabilities();
   if (
     module === undefined ||
     supported === undefined ||
@@ -176,10 +233,7 @@ export function createImage(
 }
 
 export function imageUrl(image: DisplayImage): string | undefined {
-  const module = tui;
-  return module !== undefined &&
-    capabilities(module)?.hyperlinks === true &&
-    isSessionArtifactPath(image.path)
+  return currentCapabilities()?.hyperlinks === true && isSessionArtifactPath(image.path)
     ? pathToFileURL(image.path).href
     : undefined;
 }
@@ -205,23 +259,17 @@ export function renderCall(view: DiagramCallView, theme: DisplayTheme): Componen
 }
 
 function parseTuiModule(value: unknown): TuiModule | undefined {
-  if (typeof value !== "object" || value === null) {
+  if (!isRecord(value)) {
     return undefined;
   }
-  const candidate = value as Record<string, unknown>;
-  return typeof candidate.Image === "function" ? (candidate as unknown as TuiModule) : undefined;
-}
-
-function capabilities(module: TuiModule): ImageCapabilities | undefined {
-  return readCapabilities(module);
+  return typeof value.Image === "function" ? (value as unknown as TuiModule) : undefined;
 }
 
 function readCapabilities(value: unknown): ImageCapabilities | undefined {
-  if (typeof value !== "object" || value === null) {
+  if (!isRecord(value)) {
     return undefined;
   }
-  const fields = value as Record<string, unknown>;
-  const getCapabilities = fields.getCapabilities;
+  const getCapabilities = value.getCapabilities;
   if (typeof getCapabilities === "function") {
     try {
       return parseCapabilities(getCapabilities());
@@ -229,15 +277,14 @@ function readCapabilities(value: unknown): ImageCapabilities | undefined {
       return undefined;
     }
   }
-  return parseCapabilities(fields.TERMINAL, true);
+  return parseCapabilities(value.TERMINAL, true);
 }
 
 function parseCapabilities(value: unknown, terminal = false): ImageCapabilities | undefined {
-  if (typeof value !== "object" || value === null) {
+  if (!isRecord(value)) {
     return undefined;
   }
-  const fields = value as Record<string, unknown>;
-  const imageValue = terminal ? fields.imageProtocol : fields.images;
+  const imageValue = terminal ? value.imageProtocol : value.images;
   const images =
     imageValue === "kitty" || imageValue === "\x1b_G"
       ? "kitty"
@@ -248,8 +295,8 @@ function parseCapabilities(value: unknown, terminal = false): ImageCapabilities 
           : imageValue === null
             ? null
             : undefined;
-  return images !== undefined && typeof fields.hyperlinks === "boolean"
-    ? { images, hyperlinks: fields.hyperlinks }
+  return images !== undefined && typeof value.hyperlinks === "boolean"
+    ? { images, hyperlinks: value.hyperlinks }
     : undefined;
 }
 
@@ -258,11 +305,8 @@ function readImage(image: DisplayImage, state: Record<string, unknown>): string 
     throw new Error("The image is not in this process's private store.");
   }
   const cached = state.diagramImage;
-  if (typeof cached === "object" && cached !== null) {
-    const { path, encoded } = cached as { path?: unknown; encoded?: unknown };
-    if (path === image.path && typeof encoded === "string") {
-      return encoded;
-    }
+  if (isRecord(cached) && cached.path === image.path && typeof cached.encoded === "string") {
+    return cached.encoded;
   }
 
   const bytes = readFileSync(image.path);

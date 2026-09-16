@@ -1,4 +1,4 @@
-const ELLIPSIS = "…";
+export const ELLIPSIS = "…";
 const ESC = "\u001b";
 const BEL = "\u0007";
 // CSI sequences such as colors, and OSC sequences such as hyperlinks.

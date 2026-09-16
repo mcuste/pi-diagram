@@ -1,4 +1,4 @@
-import { DiagramSourceError, describeInvalidValue } from "@mcuste/pi-diagram-core";
+import { describeInvalidValue, refuse } from "@mcuste/pi-diagram-core";
 
 /**
  * What a diagram is for decides how it looks. The model names the purpose, this table sets the
@@ -145,13 +145,11 @@ export function parseProfile(raw: unknown): RenderProfile {
   // Matched against the names, not looked up on the table, so `toString` cannot become a profile.
   const name = PROFILE_NAMES.find((candidate) => candidate === raw);
   if (name === undefined) {
-    throw new DiagramSourceError("Unsupported diagram profile.", [
-      {
-        code: "D2_SOURCE",
-        message: `${describeInvalidValue(raw)} is not a profile.`,
-        hint: `Use ${PROFILE_NAMES.join(", ")}.`,
-      },
-    ]);
+    refuse(
+      "Unsupported diagram profile.",
+      `${describeInvalidValue(raw)} is not a profile.`,
+      `Use ${PROFILE_NAMES.join(", ")}.`,
+    );
   }
   return PROFILES[name];
 }

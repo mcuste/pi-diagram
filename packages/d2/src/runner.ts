@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,12 +11,15 @@ import {
   cacheKey,
   type Diagnostic,
   DiagramSourceError,
+  describeCodePoint,
   FileCache,
   findTerminalControl,
   parseSafeSvg,
   type RenderCache,
   runCommand,
   SvgOutputError,
+  sourceError,
+  withTempDirectory,
 } from "@mcuste/pi-diagram-core";
 import { parseD2Diagnostics } from "./diagnostics.js";
 import type { LayoutPolicy, RenderProfile } from "./profiles.js";
@@ -37,6 +40,10 @@ const D2_TIMEOUT_SECONDS = 10;
 const PROCESS_TIMEOUT_MS = (D2_TIMEOUT_SECONDS + 5) * 1000;
 const MAX_RENDER_BYTES = 1024 * 1024;
 const INPUT_FILE = "input.d2";
+/** Every D2 run gets a directory of its own, holding nothing but the source. */
+const RENDER_PREFIX = "pi-diagram-";
+
+const SHRINK_HINT = "Use fewer nodes, or split the diagram.";
 
 const INSTALL_HINT =
   "Install the D2 CLI with `brew install d2` or " +
@@ -277,7 +284,7 @@ export function parseRenderedText(raw: string, mode: AsciiMode): RenderedDiagram
   const control = findTerminalControl(text, true);
   if (control !== undefined) {
     throw new TextRenderUnavailableError(
-      `D2 text output contains a control character (U+${control.codePoint.toString(16).padStart(4, "0").toUpperCase()}).`,
+      `D2 text output contains a control character (${describeCodePoint(control.codePoint)}).`,
     );
   }
   if (mode === "standard" && /[^\x20-\x7e\n]/u.test(text)) {
@@ -348,20 +355,13 @@ export class D2Cli implements D2Renderer {
   /** The formatted source is read back from the temp directory, since `fmt` writes no stdout. */
   async formatSource(request: D2FormatRequest): Promise<string> {
     const version = await this.ensureVersion(request.signal);
-    const key = cacheKey({
-      source: request.source,
-      language: "d2",
-      binary: this.binary,
-      version,
-      argv: FORMAT_ARGUMENTS,
-    });
+    const key = this.keyFor(request.source, version, FORMAT_ARGUMENTS);
     const stored = await this.cache.read(key);
     if (stored !== undefined) {
       return stored;
     }
 
-    const directory = await mkdtemp(join(tmpdir(), "pi-diagram-"));
-    try {
+    return withTempDirectory(RENDER_PREFIX, async (directory) => {
       const path = join(directory, INPUT_FILE);
       await writeFile(path, `${request.source}\n`, "utf8");
       const result = await this.run(FORMAT_ARGUMENTS, directory, request.signal);
@@ -376,9 +376,12 @@ export class D2Cli implements D2Renderer {
       const formatted = await readFile(path, "utf8");
       await this.cache.write(key, formatted);
       return formatted;
-    } finally {
-      await rm(directory, { recursive: true, force: true }).catch(() => undefined);
-    }
+    });
+  }
+
+  /** Everything that decided the output: the source, this build of D2, and its flags. */
+  private keyFor(source: D2Source, version: SupportedD2Version, argv: readonly string[]): string {
+    return cacheKey({ source, language: "d2", binary: this.binary, version, argv });
   }
 
   private async compile<TOutput>(
@@ -397,10 +400,9 @@ export class D2Cli implements D2Renderer {
       throw new CommandCancelledError("Drawing the diagram");
     }
 
-    const identity = { source, language: "d2", binary: this.binary, version } as const;
-    const key = cacheKey({ ...identity, argv: step.argv });
+    const key = this.keyFor(source, version, step.argv);
     // No arguments: what D2 accepts depends on the source and the version, not on the flags.
-    const compiles = cacheKey({ ...identity, argv: [] });
+    const compiles = this.keyFor(source, version, []);
     const stored = await this.cache.read(key);
     if (stored !== undefined) {
       try {
@@ -412,8 +414,7 @@ export class D2Cli implements D2Renderer {
       }
     }
 
-    const directory = await mkdtemp(join(tmpdir(), "pi-diagram-"));
-    try {
+    return withTempDirectory(RENDER_PREFIX, async (directory) => {
       await writeFile(join(directory, INPUT_FILE), `${source}\n`, "utf8");
       if (!this.validated.has(compiles)) {
         await this.validate(directory, signal);
@@ -430,9 +431,7 @@ export class D2Cli implements D2Renderer {
       this.remember(compiles);
       await this.cache.write(key, rendered.stdout);
       return { output, version };
-    } finally {
-      await rm(directory, { recursive: true, force: true }).catch(() => undefined);
-    }
+    });
   }
 
   private remember(key: string): void {
@@ -491,22 +490,20 @@ function translate(error: unknown, binary: string): unknown {
     return new D2UnavailableError(`Could not run ${JSON.stringify(binary)}.`, { cause: error });
   }
   if (error instanceof CommandTimeoutError) {
-    return new DiagramSourceError("Rendering this diagram took too long.", [
-      {
-        code: "D2_TIMEOUT",
-        message: `D2 did not finish within ${D2_TIMEOUT_SECONDS} seconds.`,
-        hint: "Use fewer nodes, or split the diagram.",
-      },
-    ]);
+    return sourceError(
+      "Rendering this diagram took too long.",
+      `D2 did not finish within ${D2_TIMEOUT_SECONDS} seconds.`,
+      SHRINK_HINT,
+      "D2_TIMEOUT",
+    );
   }
   if (error instanceof CommandOutputLimitError) {
-    return new DiagramSourceError("The rendered diagram is too large.", [
-      {
-        code: "D2_TOO_LARGE",
-        message: `D2 produced more than ${MAX_RENDER_BYTES} bytes.`,
-        hint: "Use fewer nodes, or split the diagram.",
-      },
-    ]);
+    return sourceError(
+      "The rendered diagram is too large.",
+      `D2 produced more than ${MAX_RENDER_BYTES} bytes.`,
+      SHRINK_HINT,
+      "D2_TOO_LARGE",
+    );
   }
   return error;
 }

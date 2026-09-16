@@ -1,28 +1,30 @@
 import { basename } from "node:path";
+import { isRecord } from "@mcuste/pi-diagram-core";
 import type {
   Component,
   DiagramDisplay,
   DiagramResultView,
   DisplayImage,
   DisplayTheme,
-  RenderOptions,
 } from "./contracts.js";
 import {
+  appendWarning,
   createImage,
+  createPreviewImage,
+  fallbackState,
   hyperlink,
+  IMAGE_UNAVAILABLE_WARNING,
   imagesSupported,
   imageUrl,
   PREVIEW_MAX_HEIGHT_CELLS,
-  PREVIEW_MAX_WIDTH_CELLS,
+  ResultComponent,
   renderCall,
   StackComponent,
   TextComponent,
   UNBOUNDED_WIDTH_CELLS,
 } from "./shared.js";
 
-const IMAGE_UNAVAILABLE_WARNING = "This terminal cannot display inline images.";
 const WIDGET_KEY = "pi-diagram.png";
-const fallbackStates = new WeakMap<object, Record<string, unknown>>();
 const toggleStates = new WeakMap<OmpUi, ToggleState>();
 
 interface OmpContext {
@@ -97,17 +99,16 @@ export function updateOmpDiagramOverlay(
 }
 
 function isOmpToolContext(value: unknown): value is OmpToolContext {
-  if (typeof value !== "object" || value === null) {
+  if (!isRecord(value)) {
     return false;
   }
-  const ui = Reflect.get(value, "ui");
+  const ui = value.ui;
   return (
-    typeof Reflect.get(value, "setInterval") === "function" &&
-    typeof ui === "object" &&
-    ui !== null &&
-    typeof Reflect.get(ui, "getToolsExpanded") === "function" &&
-    typeof Reflect.get(ui, "setToolsExpanded") === "function" &&
-    typeof Reflect.get(ui, "custom") === "function"
+    typeof value.setInterval === "function" &&
+    isRecord(ui) &&
+    typeof ui.getToolsExpanded === "function" &&
+    typeof ui.setToolsExpanded === "function" &&
+    typeof ui.custom === "function"
   );
 }
 
@@ -200,94 +201,59 @@ function renderPngOverlay(
     budget: tui.imageBudget,
     imageKey: `${WIDGET_KEY}:${image.path}`,
   });
-  container.addChild(
-    picture ?? new TextComponent(theme.fg("muted", "This terminal cannot display inline images.")),
-  );
+  container.addChild(picture ?? new TextComponent(theme.fg("muted", IMAGE_UNAVAILABLE_WARNING)));
   return new OmpPngOverlay(container, keybindings, done);
 }
 
 export function isOmpRenderContext(rawContext: unknown): boolean {
-  return (
-    typeof rawContext === "object" &&
-    rawContext !== null &&
-    typeof Reflect.get(rawContext, "source") === "string"
-  );
+  return isRecord(rawContext) && typeof rawContext.source === "string";
 }
 
 export const ompDisplay: DiagramDisplay<OmpContext> = {
   resolveContext(key) {
-    let state = fallbackStates.get(key);
-    if (state === undefined) {
-      state = {};
-      fallbackStates.set(key, state);
-    }
-    return { state };
+    return { state: fallbackState(key) };
   },
 
   renderCall,
 
-  renderResult(view, options, theme, context) {
-    return renderOmpResult(view, options, theme, context);
-  },
+  renderResult: renderOmpResult,
 };
 
+/** `auto` keeps the text row and offers the overlay; an image request draws in place. */
 function renderOmpResult(
   view: DiagramResultView,
-  _options: RenderOptions,
+  _options: unknown,
   theme: DisplayTheme,
   context: OmpContext,
-): StackComponent {
+): ResultComponent {
   const wantsImage = view.requested === "image";
   const canShowImage = wantsImage && view.image !== undefined && imagesSupported() === true;
   const picture =
     canShowImage && view.image !== undefined
-      ? createImage(view.image, theme, context.state, {
-          maxWidthCells: PREVIEW_MAX_WIDTH_CELLS,
-          maxHeightCells: PREVIEW_MAX_HEIGHT_CELLS,
-          filename: view.image.path,
-        })
+      ? createPreviewImage(view.image, theme, context.state)
       : undefined;
   const warning =
     wantsImage && view.image !== undefined && !canShowImage ? IMAGE_UNAVAILABLE_WARNING : undefined;
-  const notes =
-    warning === undefined || view.notes.includes(warning) ? view.notes : [...view.notes, warning];
-  const container = new StackComponent();
-  const line = (text: string): void => {
-    container.addChild(new TextComponent(theme.fg("toolOutput", text)));
-  };
-  const muted = (text: string): void => {
-    container.addChild(new TextComponent(theme.fg("muted", text)));
-  };
+  const notes = appendWarning(view.notes, warning);
+  const container = new ResultComponent(theme);
   const url = view.image === undefined ? undefined : imageUrl(view.image);
 
   if (view.title !== undefined) {
-    line(view.title);
+    container.line(view.title);
   }
-
-  if (view.requested === "auto") {
-    line(view.display.content);
-    if (url !== undefined && view.image !== undefined) {
-      muted(`Open PNG: ${hyperlink(basename(view.image.path), url)}`);
-    }
-    if (view.image !== undefined) {
-      muted("Ctrl+O: view latest PNG");
-    }
-    if (notes.length > 0) {
-      line(notes.join("\n"));
-    }
-    return container;
-  }
-
   if (picture === undefined) {
-    line(view.display.content);
+    container.line(view.display.content);
   } else {
     container.addChild(picture);
   }
   if (url !== undefined && view.image !== undefined) {
-    muted(`Open PNG: ${hyperlink(basename(view.image.path), url)}`);
+    container.muted(`Open PNG: ${hyperlink(basename(view.image.path), url)}`);
+  }
+  if (view.requested === "auto" && view.image !== undefined) {
+    container.muted("Ctrl+O: view latest PNG");
   }
   if (notes.length > 0) {
-    line(notes.join("\n"));
+    container.line(notes.join("\n"));
   }
   return container;
 }

@@ -1,25 +1,26 @@
 import { basename } from "node:path";
+import { isRecord } from "@mcuste/pi-diagram-core";
 import type {
+  Component,
   DiagramDisplay,
   DiagramResultView,
+  DisplayImage,
   DisplayTheme,
   RenderOptions,
 } from "./contracts.js";
 import {
+  appendWarning,
   createImage,
+  createPreviewImage,
+  fallbackState,
   hyperlink,
+  IMAGE_UNAVAILABLE_WARNING,
   imagesSupported,
   imageUrl,
-  PREVIEW_MAX_HEIGHT_CELLS,
-  PREVIEW_MAX_WIDTH_CELLS,
+  ResultComponent,
   renderCall,
-  StackComponent,
-  TextComponent,
   UNBOUNDED_WIDTH_CELLS,
 } from "./shared.js";
-
-const IMAGE_UNAVAILABLE_WARNING = "This terminal cannot display inline images.";
-const fallbackStates = new WeakMap<object, Record<string, unknown>>();
 
 interface PiContext {
   readonly showImages: boolean;
@@ -28,30 +29,17 @@ interface PiContext {
 
 export const piDisplay: DiagramDisplay<PiContext> = {
   resolveContext(key, _options, rawContext) {
-    const record =
-      typeof rawContext === "object" && rawContext !== null
-        ? (rawContext as Record<string, unknown>)
-        : undefined;
+    const record = isRecord(rawContext) ? rawContext : undefined;
     const hostState = record?.state;
-    let state =
-      typeof hostState === "object" && hostState !== null
-        ? (hostState as Record<string, unknown>)
-        : fallbackStates.get(key);
-    if (state === undefined) {
-      state = {};
-      fallbackStates.set(key, state);
-    }
     return {
       showImages: typeof record?.showImages === "boolean" ? record.showImages : true,
-      state,
+      state: isRecord(hostState) ? hostState : fallbackState(key),
     };
   },
 
   renderCall,
 
-  renderResult(view, options, theme, context) {
-    return renderPiResult(view, options, theme, context);
-  },
+  renderResult: renderPiResult,
 };
 
 function renderPiResult(
@@ -59,28 +47,13 @@ function renderPiResult(
   options: RenderOptions,
   theme: DisplayTheme,
   context: PiContext,
-): StackComponent {
+): ResultComponent {
   const wantsImage = view.requested === "image" || (view.requested === "auto" && options.expanded);
   const canShowImage =
     wantsImage && view.image !== undefined && context.showImages && imagesSupported() === true;
   const picture =
     canShowImage && view.image !== undefined
-      ? createImage(
-          view.image,
-          theme,
-          context.state,
-          options.expanded
-            ? {
-                maxWidthCells: UNBOUNDED_WIDTH_CELLS,
-                maxHeightCells: UNBOUNDED_WIDTH_CELLS,
-                filename: view.image.path,
-              }
-            : {
-                maxWidthCells: PREVIEW_MAX_WIDTH_CELLS,
-                maxHeightCells: PREVIEW_MAX_HEIGHT_CELLS,
-                filename: view.image.path,
-              },
-        )
+      ? drawImage(view.image, theme, context.state, options.expanded)
       : undefined;
   const warning =
     wantsImage && view.image !== undefined && !canShowImage
@@ -88,33 +61,26 @@ function renderPiResult(
         ? IMAGE_UNAVAILABLE_WARNING
         : "Inline images are disabled in this view."
       : undefined;
-  const notes =
-    warning === undefined || view.notes.includes(warning) ? view.notes : [...view.notes, warning];
+  const notes = appendWarning(view.notes, warning);
   const hint = piHint(view, options, picture !== undefined);
-  const container = new StackComponent();
-  const line = (text: string): void => {
-    container.addChild(new TextComponent(theme.fg("toolOutput", text)));
-  };
-  const muted = (text: string): void => {
-    container.addChild(new TextComponent(theme.fg("muted", text)));
-  };
+  const container = new ResultComponent(theme);
   const url = picture !== undefined && view.image !== undefined ? imageUrl(view.image) : undefined;
 
   if (view.title !== undefined) {
-    line(url === undefined ? view.title : hyperlink(view.title, url));
+    container.line(url === undefined ? view.title : hyperlink(view.title, url));
   }
   if (picture === undefined) {
-    line(view.display.content);
+    container.line(view.display.content);
     if (hint !== undefined && !wantsImage) {
-      muted(hint);
+      container.muted(hint);
     }
   } else {
     container.addChild(picture);
     if (view.title === undefined && url !== undefined && view.image !== undefined) {
-      muted(hyperlink(basename(view.image.path), url));
+      container.muted(hyperlink(basename(view.image.path), url));
     }
     if (hint !== undefined) {
-      muted(hint);
+      container.muted(hint);
     }
   }
 
@@ -125,9 +91,25 @@ function renderPiResult(
       : []),
   ];
   if (footer.length > 0) {
-    line(footer.join("\n"));
+    container.line(footer.join("\n"));
   }
   return container;
+}
+
+/** Expanded fills the terminal; collapsed keeps the row short. */
+function drawImage(
+  image: DisplayImage,
+  theme: DisplayTheme,
+  state: Record<string, unknown>,
+  expanded: boolean,
+): Component | undefined {
+  return expanded
+    ? createImage(image, theme, state, {
+        maxWidthCells: UNBOUNDED_WIDTH_CELLS,
+        maxHeightCells: UNBOUNDED_WIDTH_CELLS,
+        filename: image.path,
+      })
+    : createPreviewImage(image, theme, state);
 }
 
 function piHint(

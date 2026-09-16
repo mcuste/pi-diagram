@@ -14,9 +14,11 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { DiagramSourceError, describeInvalidValue } from "./diagnostics.js";
+import { refuse } from "./diagnostics.js";
+import { removeQuietly } from "./fs.js";
 import { throwIfCancelled } from "./process.js";
 import { describeCodePoint, findTerminalControl, safeErrorMessage } from "./terminal.js";
+import { describeInvalidValue, isRecord } from "./values.js";
 
 /**
  * Writes diagram artifacts. Files land in a private temporary directory unless a call names a
@@ -25,18 +27,22 @@ import { describeCodePoint, findTerminalControl, safeErrorMessage } from "./term
  */
 
 const MAX_BASENAME_LENGTH = 60;
-const MAX_DIRECTORY_LENGTH = 255;
+export const MAX_DIRECTORY_LENGTH = 255;
 /** Keeps a long session from filling the temp directory with diagrams nobody opened. */
 const MAX_TEMP_FILES = 64;
+/** Named where a cancelled write is reported, so every step of one write reads the same. */
+const WRITING = "Writing diagram artifacts";
 
-const EXTENSIONS = {
+export const ARTIFACT_FORMATS = ["source", "svg", "png", "txt"] as const;
+
+export type ArtifactFormat = (typeof ARTIFACT_FORMATS)[number];
+
+const EXTENSIONS: Readonly<Record<ArtifactFormat, string>> = {
   source: ".d2",
   svg: ".svg",
   png: ".png",
   txt: ".txt",
-} as const;
-
-export type ArtifactFormat = keyof typeof EXTENSIONS;
+};
 
 /** Editable source plus a viewable rendering. */
 const DEFAULT_FORMATS: readonly ArtifactFormat[] = ["source", "svg"];
@@ -72,9 +78,10 @@ export function parseSourceHash(raw: unknown): SourceHash {
   if (typeof raw === "string" && /^[a-f0-9]{64}$/u.test(raw)) {
     return raw as SourceHash;
   }
-  throw new DiagramSourceError("Diagram source hash is not usable.", [
-    { code: "D2_SOURCE", message: `Expected a SHA-256 digest, got ${describeInvalidValue(raw)}.` },
-  ]);
+  refuse(
+    "Diagram source hash is not usable.",
+    `Expected a SHA-256 digest, got ${describeInvalidValue(raw)}.`,
+  );
 }
 
 export interface ArtifactNames {
@@ -98,12 +105,6 @@ export interface WrittenArtifact {
   readonly path: string;
 }
 
-function refuse(summary: string, message: string, hint?: string): never {
-  throw new DiagramSourceError(summary, [
-    { code: "D2_SOURCE", message, ...(hint === undefined ? {} : { hint }) },
-  ]);
-}
-
 function parseFormats(requested: unknown): readonly ArtifactFormat[] {
   if (requested === undefined) {
     return DEFAULT_FORMATS;
@@ -121,7 +122,7 @@ function parseFormats(requested: unknown): readonly ArtifactFormat[] {
       refuse(
         "Diagram save formats are not usable.",
         `${describeInvalidValue(format)} is not a format.`,
-        `Use ${Object.keys(EXTENSIONS).join(", ")}.`,
+        `Use ${ARTIFACT_FORMATS.join(", ")}.`,
       );
     }
     const parsed = format as ArtifactFormat;
@@ -182,7 +183,7 @@ function parseDirectory(requested: unknown): string {
 }
 
 function parseSave(requested: unknown): { readonly directory: string; readonly basename: unknown } {
-  if (typeof requested !== "object" || requested === null || Array.isArray(requested)) {
+  if (!isRecord(requested)) {
     refuse(
       "Diagram save options are not usable.",
       `Expected an object, got ${describeInvalidValue(requested)}.`,
@@ -298,10 +299,7 @@ function contains(root: string, candidate: string): boolean {
 
 /** Checks whether a system error has a given code. */
 function hasSystemErrorCode(error: unknown, code: string): boolean {
-  if (typeof error !== "object" || error === null || !("code" in error)) {
-    return false;
-  }
-  return error.code === code;
+  return isRecord(error) && error.code === code;
 }
 
 /**
@@ -419,7 +417,7 @@ export async function writeArtifacts(
   contents: ReadonlyMap<ArtifactFormat, string | Uint8Array>,
   signal?: AbortSignal,
 ): Promise<readonly WrittenArtifact[]> {
-  throwIfCancelled(signal, "Writing diagram artifacts");
+  throwIfCancelled(signal, WRITING);
   await mkdir(target.directory, { recursive: true });
   if (target.location === "workspace") {
     // The directory exists now, so this catches a link created between the check and the write.
@@ -435,7 +433,7 @@ export async function writeArtifacts(
         continue;
       }
 
-      throwIfCancelled(signal, "Writing diagram artifacts");
+      throwIfCancelled(signal, WRITING);
       const destination = join(target.directory, `${target.names.basename}${EXTENSIONS[format]}`);
       const temporary = join(target.directory, `.${target.names.basename}.${randomUUID()}.tmp`);
       const previous = await snapshotWritable(destination);
@@ -455,7 +453,7 @@ export async function writeArtifacts(
     }
 
     for (const artifact of staged) {
-      throwIfCancelled(signal, "Writing diagram artifacts");
+      throwIfCancelled(signal, WRITING);
       await assertUnchanged(artifact);
       if (artifact.previous === undefined) {
         // A hard link fails when another process creates the destination. `rename` would overwrite it.
@@ -483,10 +481,10 @@ export async function writeArtifacts(
   } finally {
     await Promise.all(
       staged.flatMap((artifact) => [
-        rm(artifact.temporary, { force: true }).catch(() => undefined),
+        removeQuietly(artifact.temporary),
         artifact.backup === undefined || !committed
           ? Promise.resolve()
-          : rm(artifact.backup, { force: true }).catch(() => undefined),
+          : removeQuietly(artifact.backup),
       ]),
     );
   }

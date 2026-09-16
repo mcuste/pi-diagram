@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, rename, rm, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rename, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeQuietly } from "./fs.js";
 
 /**
  * Holds what a renderer returned, keyed by everything that decided it. A render costs a subprocess
@@ -84,12 +85,12 @@ export class FileCache implements RenderCache {
       }
       const found = await lstat(path);
       if (!found.isFile() || found.size > MAX_ENTRY_BYTES || this.expired(found.mtimeMs)) {
-        await rm(path, { force: true }).catch(() => undefined);
+        await removeQuietly(path);
         return undefined;
       }
       const value = await readFile(path, "utf8");
       if (Buffer.byteLength(value, "utf8") > MAX_ENTRY_BYTES) {
-        await rm(path, { force: true }).catch(() => undefined);
+        await removeQuietly(path);
         return undefined;
       }
       // Touched on use, so eviction drops what nobody draws any more.
@@ -116,7 +117,7 @@ export class FileCache implements RenderCache {
       // Renamed into place, so a reader never sees half a diagram.
       await rename(temporary, destination);
     } catch {
-      await rm(temporary, { force: true }).catch(() => undefined);
+      await removeQuietly(temporary);
       return;
     }
     await this.prune();
@@ -137,7 +138,7 @@ export class FileCache implements RenderCache {
           continue;
         }
         if (found.size > MAX_ENTRY_BYTES || this.expired(found.mtimeMs)) {
-          await rm(path, { force: true }).catch(() => undefined);
+          await removeQuietly(path);
           continue;
         }
         entries.push({ path, bytes: found.size, usedAt: found.mtimeMs });
@@ -151,7 +152,7 @@ export class FileCache implements RenderCache {
         if (total <= this.maxBytes) {
           return;
         }
-        await rm(entry.path, { force: true }).catch(() => undefined);
+        await removeQuietly(entry.path);
         total -= entry.bytes;
       }
     } catch {

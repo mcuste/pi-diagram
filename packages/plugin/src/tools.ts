@@ -1,9 +1,12 @@
-import { readFile } from "node:fs/promises";
 import {
+  ARTIFACT_FORMATS,
   type Diagnostic,
   formatDiagnostic,
+  isRecord,
+  MAX_DIRECTORY_LENGTH,
   parseArtifactNames,
   removeTerminalControls,
+  type StoredPng,
   workspacePaths,
 } from "@mcuste/pi-diagram-core";
 import {
@@ -11,7 +14,10 @@ import {
   type D2Renderer,
   DEFAULT_PROFILE,
   type DiagramRendering,
+  MAX_TITLE_LENGTH,
+  PROFILE_NAMES,
   type ProfileName,
+  RENDER_MODES,
   type Representation,
   ResvgRasterizer,
   renderDiagram,
@@ -20,6 +26,7 @@ import {
 import {
   type Component,
   type DiagramCallView,
+  type DiagramDisplay,
   type DiagramResultView,
   type DisplayedAs,
   type DisplayTheme,
@@ -27,32 +34,25 @@ import {
   ompDisplay,
   piDisplay,
   primeDisplay,
+  type RenderOptions,
   updateOmpDiagramOverlay,
 } from "@mcuste/pi-diagram-display";
-import { type Static, type TSchema, Type } from "typebox";
+import { type Static, type TLiteral, type TSchema, type TUnion, Type } from "typebox";
+import { textAsset } from "./assets.js";
 
 /**
  * Capped well below what D2 can parse: a diagram that reads clearly in a terminal is a few dozen
  * lines, and a larger one usually means the model is dumping a whole codebase.
  */
 const MAX_SOURCE_LENGTH = 20_000;
-const MAX_TITLE_LENGTH = 120;
-const MAX_PATH_LENGTH = 255;
 
-let diagramDescription: string | undefined;
-let diagramDescriptionLoading: Promise<void> | undefined;
+const description = textAsset(
+  new URL("./tool-description.md", import.meta.url),
+  "Diagram tool description",
+);
 
 export function primeDiagramDescription(): Promise<void> {
-  diagramDescriptionLoading ??= readFile(
-    new URL("./tool-description.md", import.meta.url),
-    "utf8",
-  ).then((source) => {
-    diagramDescription = source.trimEnd();
-    if (diagramDescription === "") {
-      throw new Error("Diagram tool description is empty.");
-    }
-  });
-  return diagramDescriptionLoading;
+  return description.prime();
 }
 
 const DiagramSource = Type.String({
@@ -67,37 +67,33 @@ const DiagramTitle = Type.String({
   description: "Short label shown with the diagram and used to name saved artifacts.",
 });
 
-/** One literal per profile, because a mapped union loses the names from the static type. */
-const DiagramProfile = Type.Union(
-  [
-    Type.Literal("explain"),
-    Type.Literal("architecture"),
-    Type.Literal("data"),
-    Type.Literal("docs"),
-    Type.Literal("tree"),
-    Type.Literal("c4"),
-    Type.Literal("dependency"),
-  ],
-  {
-    description:
-      "What the diagram is for. The harness maps this to theme and spacing; the model does not choose them.",
-  },
-);
+/** A tuple of literals, not an array: TypeBox only keeps the names when it can walk the members. */
+type LiteralUnion<TNames extends readonly string[]> = TUnion<{
+  -readonly [Index in keyof TNames]: TLiteral<TNames[Index]>;
+}>;
 
-const DiagramRender = Type.Union(
-  [Type.Literal("auto"), Type.Literal("image"), Type.Literal("unicode"), Type.Literal("source")],
-  {
-    description:
-      "`auto` prepares complete Unicode and PNG views. Ctrl+O replaces Unicode in Pi or opens OMP's latest PNG in a fullscreen overlay. Explicit modes override the display for this call.",
-  },
-);
+/** Builds the schema from the same list the parser checks against, so the two cannot disagree. */
+function literalUnion<const TNames extends readonly string[]>(
+  names: TNames,
+  options?: { readonly description: string },
+): LiteralUnion<TNames> {
+  return Type.Union(
+    names.map((name) => Type.Literal(name)),
+    options,
+  ) as LiteralUnion<TNames>;
+}
 
-const DiagramFormat = Type.Union([
-  Type.Literal("source"),
-  Type.Literal("svg"),
-  Type.Literal("png"),
-  Type.Literal("txt"),
-]);
+const DiagramProfile = literalUnion(PROFILE_NAMES, {
+  description:
+    "What the diagram is for. The harness maps this to theme and spacing; the model does not choose them.",
+});
+
+const DiagramRender = literalUnion(RENDER_MODES, {
+  description:
+    "`auto` prepares complete Unicode and PNG views. Ctrl+O replaces Unicode in Pi or opens OMP's latest PNG in a fullscreen overlay. Explicit modes override the display for this call.",
+});
+
+const DiagramFormat = literalUnion(ARTIFACT_FORMATS);
 
 const DiagramFormats = Type.Array(DiagramFormat, {
   minItems: 1,
@@ -110,7 +106,7 @@ const DiagramSave = Type.Object(
   {
     dir: Type.String({
       minLength: 1,
-      maxLength: MAX_PATH_LENGTH,
+      maxLength: MAX_DIRECTORY_LENGTH,
       description:
         "Directory inside the workspace to copy the files into. There is no default: name where diagrams belong in this repository.",
     }),
@@ -153,7 +149,7 @@ interface DiagramToolDetails {
   readonly profile: ProfileName;
   readonly requested: Static<typeof DiagramRender>;
   readonly renderedAs: Representation;
-  readonly image?: { readonly path: string; readonly widthPx: number; readonly heightPx: number };
+  readonly image?: StoredPng;
   /** The diagram as text, for the renderer and as the fallback for an image. */
   readonly textPreview: string;
   /** The D2 source, shown in the expanded row. */
@@ -257,8 +253,7 @@ function approvalDetails(args: unknown): readonly string[] | undefined {
   if (save === undefined) {
     return ["Writes diagram artifacts into the repository"];
   }
-  const read = (key: string): unknown =>
-    typeof args === "object" && args !== null ? Reflect.get(args, key) : undefined;
+  const read = (key: string): unknown => (isRecord(args) ? Reflect.get(args, key) : undefined);
   try {
     const title = read("title");
     const names = parseArtifactNames(
@@ -274,17 +269,15 @@ function approvalDetails(args: unknown): readonly string[] | undefined {
 }
 
 function readSave(args: unknown): Record<string, unknown> | undefined {
-  if (typeof args !== "object" || args === null) {
+  if (!isRecord(args)) {
     return undefined;
   }
   const save = Reflect.get(args, "save");
-  return typeof save === "object" && save !== null && !Array.isArray(save)
-    ? (save as Record<string, unknown>)
-    : undefined;
+  return isRecord(save) ? save : undefined;
 }
 
 function hasSave(args: unknown): boolean {
-  return typeof args === "object" && args !== null && Object.hasOwn(args, "save");
+  return isRecord(args) && Object.hasOwn(args, "save");
 }
 
 /** The waiting row names the diagram and the policy, never the source. */
@@ -311,11 +304,7 @@ const DRAWN: Readonly<Record<DisplayedAs, string>> = {
 };
 
 /** Prevents the model from redrawing a diagram omitted from its context. */
-function contentFor(
-  rendering: DiagramRendering,
-  drawnHere: boolean,
-  notes: readonly string[],
-): string {
+function contentFor(rendering: DiagramRendering, drawnHere: boolean): string {
   const paths = rendering.saved.map((artifact) => artifact.path).join(", ");
   const saved =
     rendering.saved.length === 0
@@ -324,7 +313,7 @@ function contentFor(
         ? `saved in the repository: ${paths}`
         : `saved outside the repository: ${paths}`;
   const blocks = drawnHere ? [summaryFor(rendering)] : [rendering.title, rendering.display.content];
-  return [...blocks, saved, ...notes.map((note) => `note: ${note}`)]
+  return [...blocks, saved, ...rendering.notes.map((note) => `note: ${note}`)]
     .filter((block): block is string => Boolean(block))
     .join("\n\n");
 }
@@ -405,14 +394,23 @@ function displayView(details: DiagramToolDetails): DiagramResultView {
   };
 }
 
+/** Each host keeps its own context type, so resolving and rendering stay together. */
+function renderWith<TContext>(
+  display: DiagramDisplay<TContext>,
+  details: DiagramToolDetails,
+  options: RenderOptions,
+  theme: DisplayTheme,
+  rawContext: unknown,
+): Component {
+  const context = display.resolveContext(details, options, rawContext);
+  return display.renderResult(displayView(details), options, theme, context);
+}
+
 export function registerDiagramTools(
   pi: DiagramExtensionApi,
   dependencies: DiagramExtensionDependencies = {},
 ): void {
-  const description = diagramDescription;
-  if (description === undefined) {
-    throw new Error("Diagram tool description has not loaded.");
-  }
+  const text = description.read();
   const renderer = dependencies.renderer ?? new D2Cli();
   const rasterizer = dependencies.rasterizer ?? new ResvgRasterizer();
   const display = primeDisplay();
@@ -420,7 +418,7 @@ export function registerDiagramTools(
   pi.registerTool<typeof DiagramParameters, DiagramToolDetails>({
     name: "diagram",
     label: "Diagram",
-    description,
+    description: text,
     parameters: DiagramParameters,
     approval: approvalFor,
     formatApprovalDetails: approvalDetails,
@@ -467,19 +465,14 @@ export function registerDiagramTools(
         (parameters.render ?? "auto") === "auto",
       );
       return {
-        content: [{ type: "text", text: contentFor(rendering, drawnHere, rendering.notes) }],
+        content: [{ type: "text", text: contentFor(rendering, drawnHere) }],
         details: detailsFor(parameters, rendering),
       };
     },
     renderResult(result, options, theme, context) {
-      const details = result.details;
-      const view = displayView(details);
-      if (isOmpRenderContext(context)) {
-        const displayContext = ompDisplay.resolveContext(details, options, context);
-        return ompDisplay.renderResult(view, options, theme, displayContext);
-      }
-      const displayContext = piDisplay.resolveContext(details, options, context);
-      return piDisplay.renderResult(view, options, theme, displayContext);
+      return isOmpRenderContext(context)
+        ? renderWith(ompDisplay, result.details, options, theme, context)
+        : renderWith(piDisplay, result.details, options, theme, context);
     },
   });
 }

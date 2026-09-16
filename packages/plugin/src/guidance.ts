@@ -1,24 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { textAsset } from "./assets.js";
 
-let guidance: string | undefined;
-let guidanceLoading: Promise<void> | undefined;
-
-function primeDiagramGuidance(): Promise<void> {
-  guidanceLoading ??= readFile(new URL("./guidance.md", import.meta.url), "utf8").then((source) => {
-    guidance = source.trimEnd();
-    if (guidance === "") {
-      throw new Error("Diagram guidance is empty.");
-    }
-  });
-  return guidanceLoading;
-}
-
-function cachedGuidance(): string {
-  if (guidance === undefined) {
-    throw new Error("Diagram guidance has not loaded.");
-  }
-  return guidance;
-}
+const guidance = textAsset(new URL("./guidance.md", import.meta.url), "Diagram guidance");
 
 /** Pi hands over one prompt string; Oh My Pi hands over ordered blocks. */
 type HostSystemPrompt = string | readonly string[];
@@ -41,7 +23,7 @@ export interface GuidanceExtensionApi {
 }
 
 export async function registerDiagramGuidance(pi: GuidanceExtensionApi): Promise<void> {
-  await primeDiagramGuidance();
+  await guidance.prime();
   pi.on?.("before_agent_start", withGuidance);
 }
 
@@ -54,16 +36,16 @@ export function withGuidance(event: AgentStartEvent): AgentStartResult | undefin
   if (!toolActive(event)) {
     return undefined;
   }
-  const guidance = cachedGuidance();
+  const text = guidance.read();
   if (typeof prompt === "string") {
-    return prompt === "" || prompt.includes(guidance)
+    return prompt === "" || prompt.includes(text)
       ? undefined
-      : { systemPrompt: `${prompt}\n\n${guidance}` };
+      : { systemPrompt: `${prompt}\n\n${text}` };
   }
-  if (!Array.isArray(prompt) || prompt.length === 0 || prompt.includes(guidance)) {
+  if (!Array.isArray(prompt) || prompt.length === 0 || prompt.includes(text)) {
     return undefined;
   }
-  return { systemPrompt: [...prompt, guidance] };
+  return { systemPrompt: [...prompt, text] };
 }
 
 /** Telling the model to draw with a tool the user turned off would waste a turn. */

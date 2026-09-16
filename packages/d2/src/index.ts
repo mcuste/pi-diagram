@@ -12,7 +12,7 @@ export {
   ResvgRasterizer,
 } from "./raster.js";
 export type { DiagramRendering, Representation } from "./render.js";
-export { parseRepresentation, renderDiagram } from "./render.js";
+export { parseRepresentation, RENDER_MODES, renderDiagram } from "./render.js";
 export type {
   AsciiMode,
   D2FormatRequest,
@@ -36,4 +36,4 @@ export {
   TextRenderUnavailableError,
 } from "./runner.js";
 export type { D2Source, ParsedD2Source, SafeTitle } from "./source.js";
-export { parseD2Source, parseTitle } from "./source.js";
+export { MAX_TITLE_LENGTH, parseD2Source, parseTitle } from "./source.js";

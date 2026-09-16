@@ -1,12 +1,12 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CommandCancelledError,
   cacheKeyOf,
   FileCache,
   ImageRenderUnavailableError,
+  isRecord,
   MAX_HEIGHT_PX,
   MAX_PIXELS,
   MAX_WIDTH_PX,
@@ -16,6 +16,7 @@ import {
   type RenderCache,
   safeErrorMessage,
   throwIfCancelled,
+  withTempDirectory,
 } from "@mcuste/pi-diagram-core";
 import {
   type EmbeddedFont,
@@ -34,6 +35,8 @@ import type { RenderedSvg } from "./runner.js";
 const SCALE = 2;
 const MIN_WIDTH_PX = 480;
 const DEFAULT_FONT_FAMILY = "Source Sans Pro";
+/** Named where a cancelled image is reported, so every step of one image reads the same. */
+const DRAWING = "Drawing the diagram";
 
 /** Everything besides the SVG and resvg itself that decides the picture. */
 const IMAGE_POLICY = [
@@ -151,7 +154,7 @@ export class ResvgRasterizer implements SvgRasterizer {
   }
 
   async rasterize(request: RasterRequest): Promise<RasterImage> {
-    throwIfCancelled(request.signal, "Drawing the diagram");
+    throwIfCancelled(request.signal, DRAWING);
 
     const key = await imageKey(request.svg);
     const stored = key === undefined ? undefined : await this.cache.read(key);
@@ -163,13 +166,13 @@ export class ResvgRasterizer implements SvgRasterizer {
         // An entry this build cannot read is no better than a missing one.
       }
       if (cached !== undefined) {
-        throwIfCancelled(request.signal, "Drawing the diagram");
+        throwIfCancelled(request.signal, DRAWING);
         return cached;
       }
     }
 
     const image = await draw(request.svg, request.signal);
-    throwIfCancelled(request.signal, "Drawing the diagram");
+    throwIfCancelled(request.signal, DRAWING);
     if (key !== undefined) {
       await this.cache.write(key, formatCachedImage(image));
     }
@@ -189,7 +192,7 @@ async function resvgVersion(): Promise<string | undefined> {
     try {
       const manifest = createRequire(import.meta.url).resolve("@resvg/resvg-js/package.json");
       const parsed: unknown = JSON.parse(await readFile(manifest, "utf8"));
-      if (typeof parsed !== "object" || parsed === null || !("version" in parsed)) {
+      if (!isRecord(parsed)) {
         return undefined;
       }
       return typeof parsed.version === "string" ? parsed.version : undefined;
@@ -200,31 +203,32 @@ async function resvgVersion(): Promise<string | undefined> {
   return installed;
 }
 async function draw(svg: RenderedSvg, signal: AbortSignal | undefined): Promise<RasterImage> {
-  throwIfCancelled(signal, "Drawing the diagram");
+  throwIfCancelled(signal, DRAWING);
   const { Resvg } = await load();
   const fonts = parseEmbeddedFonts(svg);
   const missing = missingCodePoints(fonts, textCodePoints(svg));
-  const directory = await mkdtemp(join(tmpdir(), "pi-diagram-fonts-"));
   try {
-    const fontFiles = await writeFonts(directory, fonts);
-    throwIfCancelled(signal, "Drawing the diagram");
-    const font = {
-      fontFiles,
-      // Labels the diagram's own font cannot draw would otherwise be empty boxes.
-      loadSystemFonts: missing.length > 0,
-      defaultFontFamily: DEFAULT_FONT_FAMILY,
-    };
+    return await withTempDirectory("pi-diagram-fonts-", async (directory) => {
+      const fontFiles = await writeFonts(directory, fonts);
+      throwIfCancelled(signal, DRAWING);
+      const font = {
+        fontFiles,
+        // Labels the diagram's own font cannot draw would otherwise be empty boxes.
+        loadSystemFonts: missing.length > 0,
+        defaultFontFamily: DEFAULT_FONT_FAMILY,
+      };
 
-    const probe = new Resvg(svg, { font });
-    const dimensions = parseTargetDimensions(probe.width, probe.height);
-    const fitTo =
-      dimensions.heightPx === MAX_HEIGHT_PX && dimensions.widthPx < MAX_WIDTH_PX
-        ? { mode: "height" as const, value: dimensions.heightPx }
-        : { mode: "width" as const, value: dimensions.widthPx };
-    const drawn = new Resvg(svg, { font, fitTo });
-    const image = parseRenderedPng(drawn.render().asPng(), dimensions);
-    throwIfCancelled(signal, "Drawing the diagram");
-    return { ...image, systemFonts: missing.length > 0 };
+      const probe = new Resvg(svg, { font });
+      const dimensions = parseTargetDimensions(probe.width, probe.height);
+      const fitTo =
+        dimensions.heightPx === MAX_HEIGHT_PX && dimensions.widthPx < MAX_WIDTH_PX
+          ? { mode: "height" as const, value: dimensions.heightPx }
+          : { mode: "width" as const, value: dimensions.widthPx };
+      const drawn = new Resvg(svg, { font, fitTo });
+      const image = parseRenderedPng(drawn.render().asPng(), dimensions);
+      throwIfCancelled(signal, DRAWING);
+      return { ...image, systemFonts: missing.length > 0 };
+    });
   } catch (error) {
     if (error instanceof ImageRenderUnavailableError || error instanceof CommandCancelledError) {
       throw error;
@@ -233,8 +237,6 @@ async function draw(svg: RenderedSvg, signal: AbortSignal | undefined): Promise<
       `The SVG could not be drawn as an image: ${safeErrorMessage(error)}`,
       { cause: error },
     );
-  } finally {
-    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 

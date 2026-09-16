@@ -8,7 +8,9 @@ export type {
   WrittenArtifact,
 } from "./artifacts.js";
 export {
+  ARTIFACT_FORMATS,
   isSessionArtifactPath,
+  MAX_DIRECTORY_LENGTH,
   parseArtifactNames,
   parseArtifactTarget,
   parseSourceHash,
@@ -20,10 +22,12 @@ export { cacheKey, cacheKeyOf, FileCache, noCache } from "./cache.js";
 export type { Diagnostic, DiagnosticCode } from "./diagnostics.js";
 export {
   DiagramSourceError,
-  describeInvalidValue,
   formatDiagnostic,
   MAX_DIAGNOSTICS,
+  refuse,
+  sourceError,
 } from "./diagnostics.js";
+export { removeQuietly, withTempDirectory } from "./fs.js";
 export type { RasterDimensions, RasterImage, StoredPng } from "./png.js";
 export {
   ImageRenderUnavailableError,
@@ -49,3 +53,4 @@ export {
   removeTerminalControls,
   safeErrorMessage,
 } from "./terminal.js";
+export { describeInvalidValue, isRecord } from "./values.js";

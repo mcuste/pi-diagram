@@ -5,13 +5,15 @@ import {
   describeInvalidValue,
   findTerminalControl,
   parseSourceHash,
+  refuse,
   type SourceHash,
 } from "@mcuste/pi-diagram-core";
 import { inspect } from "./preflight.js";
 
 /** Byte-level enforcement of the schema's character limit in `tools.ts`. */
 const MAX_SOURCE_BYTES = 20 * 1024;
-const MAX_TITLE_LENGTH = 120;
+/** The tool schema enforces the same limit on what the model may send. */
+export const MAX_TITLE_LENGTH = 120;
 
 const BYTE_ORDER_MARK = 0xfeff;
 
@@ -28,16 +30,6 @@ export interface ParsedD2Source {
   readonly source: D2Source;
   readonly hash: SourceHash;
   readonly lineCount: number;
-}
-
-interface FoundControl {
-  readonly offset: number;
-  readonly codePoint: number;
-}
-
-/** Characters a terminal would act on rather than print. */
-function findControl(text: string): FoundControl | undefined {
-  return findTerminalControl(text, true, true);
 }
 
 /** Parses model input into the only source type accepted by D2 renderers. */
@@ -60,37 +52,31 @@ export function parseD2Source(raw: unknown): ParsedD2Source {
 
 function normalizeSource(raw: unknown): string {
   if (typeof raw !== "string") {
-    throw new DiagramSourceError("Diagram source must be a string.", [
-      { code: "D2_SOURCE", message: `Received ${raw === null ? "null" : typeof raw}.` },
-    ]);
+    refuse("Diagram source must be a string.", `Received ${raw === null ? "null" : typeof raw}.`);
   }
 
   const text = stripByteOrderMark(raw).replace(/\r\n?/gu, "\n").trim();
   if (text.length === 0) {
-    throw new DiagramSourceError("Diagram source is empty.", [
-      { code: "D2_SOURCE", message: "Send D2 source such as `client -> gateway: request`." },
-    ]);
+    refuse("Diagram source is empty.", "Send D2 source such as `client -> gateway: request`.");
   }
 
-  const control = findControl(text);
+  // Tabs and newlines are kept; anything else a terminal would act on is refused.
+  const control = findTerminalControl(text, true, true);
   if (control) {
-    throw new DiagramSourceError("Diagram source contains a control character.", [
-      {
-        code: "D2_SOURCE",
-        message: `${describeCodePoint(control.codePoint)} at offset ${control.offset} is not allowed in diagram source.`,
-      },
-    ]);
+    refuse(
+      "Diagram source contains a control character.",
+      `${describeCodePoint(control.codePoint)} at offset ${control.offset} is not allowed in diagram source.`,
+    );
   }
 
   const bytes = Buffer.byteLength(text, "utf8");
   if (bytes > MAX_SOURCE_BYTES) {
-    throw new DiagramSourceError("Diagram source is too large.", [
-      {
-        code: "D2_TOO_LARGE",
-        message: `${bytes} bytes is above the ${MAX_SOURCE_BYTES} byte limit.`,
-        hint: "Split it into smaller diagrams.",
-      },
-    ]);
+    refuse(
+      "Diagram source is too large.",
+      `${bytes} bytes is above the ${MAX_SOURCE_BYTES} byte limit.`,
+      "Split it into smaller diagrams.",
+      "D2_TOO_LARGE",
+    );
   }
   return text;
 }
@@ -100,26 +86,20 @@ export function parseTitle(raw: unknown): SafeTitle | undefined {
     return undefined;
   }
   if (typeof raw !== "string") {
-    throw new DiagramSourceError("Diagram title must be a string.", [
-      { code: "D2_SOURCE", message: `Received ${describeInvalidValue(raw)}.` },
-    ]);
+    refuse("Diagram title must be a string.", `Received ${describeInvalidValue(raw)}.`);
   }
   if (raw.length > MAX_TITLE_LENGTH) {
-    throw new DiagramSourceError("Diagram title is too long.", [
-      {
-        code: "D2_SOURCE",
-        message: `${raw.length} characters is above the ${MAX_TITLE_LENGTH} character limit.`,
-      },
-    ]);
+    refuse(
+      "Diagram title is too long.",
+      `${raw.length} characters is above the ${MAX_TITLE_LENGTH} character limit.`,
+    );
   }
   const printable = Array.from(raw, (character) =>
     findTerminalControl(character) === undefined ? character : " ",
   ).join("");
   const title = printable.replace(/\s+/gu, " ").trim();
   if (title.length === 0) {
-    throw new DiagramSourceError("Diagram title is empty.", [
-      { code: "D2_SOURCE", message: "Give the diagram a non-empty title." },
-    ]);
+    refuse("Diagram title is empty.", "Give the diagram a non-empty title.");
   }
   return title as SafeTitle;
 }

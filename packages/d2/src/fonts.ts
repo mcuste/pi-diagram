@@ -93,19 +93,24 @@ export function missingCodePoints(
   return [...needed].filter((code) => !fonts.some((font) => font.coverage?.has(code) === true));
 }
 
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+};
+
 function decodeEntities(text: string): string {
   return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/giu, (entity, body: string) => {
-    const named: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
     if (body.startsWith("#")) {
-      const code = Number.parseInt(
-        body.slice(body.startsWith("#x") || body.startsWith("#X") ? 2 : 1),
-        body.startsWith("#x") || body.startsWith("#X") ? 16 : 10,
-      );
+      const hex = body.startsWith("#x") || body.startsWith("#X");
+      const code = Number.parseInt(body.slice(hex ? 2 : 1), hex ? 16 : 10);
       return Number.isSafeInteger(code) && code > 0 && code <= 0x10ffff
         ? String.fromCodePoint(code)
         : entity;
     }
-    return named[body.toLowerCase()] ?? entity;
+    return NAMED_ENTITIES[body.toLowerCase()] ?? entity;
   });
 }
 
