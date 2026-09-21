@@ -14,6 +14,7 @@ const SAFE_ELEMENTS: ReadonlySet<string> = new Set([
   "style",
   "svg",
   "text",
+  "tspan",
 ]);
 const SAFE_AT_RULES: ReadonlySet<string> = new Set(["font-face", "media"]);
 const UNSAFE_CSS_IDENTIFIERS: ReadonlySet<string> = new Set([
