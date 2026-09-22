@@ -440,3 +440,30 @@ test("a saved png holds the same image the terminal was given", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a label with a line break renders through the real CLI as SVG and PNG", async () => {
+  // D2 draws a multiline label as several tspan elements, which the SVG parser has to accept.
+  const root = await mkdtemp(join(tmpdir(), "pi-diagram-e2e-"));
+  try {
+    const rendering = await renderDiagram(
+      {
+        source: await fixture("multiline-labels.d2"),
+        title: "Multiline",
+        render: "image",
+        save: { dir: "docs/diagrams" },
+        cwd: root,
+      },
+      new D2Cli(),
+    );
+
+    const svg = await readFile(join(root, "docs/diagrams/multiline.svg"), "utf8");
+    for (const line of ["1. scanner.Scan()", "(Reads and ignores the --- line)"]) {
+      assert.ok(svg.includes(line), `SVG lost ${line}`);
+    }
+    assert.ok(rendering.image, "no image was produced");
+    assert.equal(rendering.image.widthPx > 0 && rendering.image.heightPx > 0, true);
+    assert.deepEqual(rendering.notes, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
