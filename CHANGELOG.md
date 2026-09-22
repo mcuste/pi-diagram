@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file. The format foll
 ### Fixed
 
 - Shape names written with capital letters, such as `shape: Rectangle`, are no longer refused.
+- Multiline D2 labels using `<tspan>` are no longer refused. Diagrams with `\n` in labels
+  now render SVG and PNG instead of falling back to Unicode-only output.
 
 ## [0.6.2] - 2026-09-07
 
