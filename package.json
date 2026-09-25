@@ -35,10 +35,10 @@
     "test:integration": "pnpm build && pnpm -r test:integration"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.12",
-    "@types/node": "^26.4.1",
+    "@biomejs/biome": "2.5.14",
+    "@types/node": "^26.6.2",
     "esbuild": "0.28.2",
-    "knip": "6.34.0",
+    "knip": "6.37.0",
     "publint": "0.3.24",
     "typescript": "^7.0.2"
   },
