@@ -63,8 +63,8 @@
     "@mcuste/pi-diagram-core": "workspace:*",
     "@mcuste/pi-diagram-d2": "workspace:*",
     "@mcuste/pi-diagram-display": "workspace:*",
-    "@earendil-works/pi-tui": "^0.85.1",
-    "typebox": "^1.3.28"
+    "@earendil-works/pi-tui": "^0.87.1",
+    "typebox": "^1.3.34"
   },
   "pi": {
     "extensions": [
